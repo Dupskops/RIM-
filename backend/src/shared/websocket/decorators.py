@@ -1,0 +1,1 @@
+# Crearemos un decorador para @require_premium con FastAPI

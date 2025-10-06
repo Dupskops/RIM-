@@ -1,0 +1,1 @@
+# Inyección de dependencias globales
