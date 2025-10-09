@@ -68,10 +68,6 @@ Features controladas por middleware según plan de suscripción.
 
 ```
 RIM-\
-|-- .vscode\
-|   +-- settings.json
-|-- __pycache__\
-|   +-- main.cpython-313.pyc
 |-- docker\
 |   |-- docker-compose.yml
 |   +-- Dockerfile
@@ -235,5 +231,4 @@ RIM-\
 |-- .env.example
 |-- README.md
 |-- requirements.txt
-+-- tree_no_venv.ps1
 ```

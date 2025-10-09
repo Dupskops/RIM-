@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: rim-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rim_db
+      POSTGRES_USER: rim_user
+      POSTGRES_PASSWORD: rim_password_2024
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d  # Scripts iniciales SQL
+    networks:
+      - rim-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rim_user -d rim_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Redis Cache & Pub/Sub
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: rim-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass rim_redis_pass_2024
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - rim-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ============================================
+  # Ollama LLM Server (con GPU opcional)
+  # ============================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rim-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama  # Modelos descargados se guardan aquí
+    networks:
+      - rim-network
+    # Descomentar si tienes GPU NVIDIA
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================
+  # FastAPI Backend (opcional, para desarrollo)
+  # ============================================
+  # backend:
+  #   build:
+  #     context: ..
+  #     dockerfile: docker/Dockerfile
+  #   container_name: rim-backend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ../src:/app/src
+  #     - ../tests:/app/tests
+  #   environment:
+  #     - DATABASE_URL=postgresql+asyncpg://rim_user:rim_password_2024@postgres:5432/rim_db
+  #     - REDIS_URL=redis://:rim_redis_pass_2024@redis:6379/0
+  #     - OLLAMA_BASE_URL=http://ollama:11434
+  #     - PYTHONUNBUFFERED=1
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     ollama:
+  #       condition: service_healthy
+  #   networks:
+  #     - rim-network
+  #   command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+# ============================================
+# Volumes Persistentes
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+    name: rim-postgres-data
+  redis_data:
+    driver: local
+    name: rim-redis-data
+  ollama_data:
+    driver: local
+    name: rim-ollama-models
+
+# ============================================
+# Network
+# ============================================
+networks:
+  rim-network:
+    driver: bridge
+    name: rim-network
