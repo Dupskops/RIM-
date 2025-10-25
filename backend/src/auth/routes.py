@@ -223,6 +223,7 @@ async def get_current_user(
 ) -> ApiResponse[UserResponse]:
     """Obtiene el perfil del usuario autenticado."""
     usuario_repo = UsuarioRepository(db)
+    #Estoy cambiando current_user_id a int(current_user_id)
     usuario = await usuario_repo.get_by_id(current_user_id)
     
     return create_success_response(

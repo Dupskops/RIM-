@@ -149,8 +149,8 @@ class UsuarioFilterParams(FilterParams):
 
 class UsuarioResponse(BaseModel):
     """Schema para respuesta con datos de usuario."""
-    
-    id: str = Field(..., description="ID del usuario")
+    #cambien id:str por int
+    id: int = Field(..., description="ID del usuario")
     email: str = Field(..., description="Email del usuario")
     nombre: str = Field(..., description="Nombre completo")
     telefono: Optional[str] = Field(None, description="Teléfono")

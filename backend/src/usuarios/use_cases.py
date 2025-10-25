@@ -139,7 +139,8 @@ class ListUsuariosUseCase:
         # Obtener usuarios con los parámetros actualizados
         usuarios, total = await repo.list_usuarios(
             query=filters.search,  # Renombrado de query a search
-            es_admin=filters.es_admin,
+            #CAMBIEN es_admin por rol
+            rol=filters.rol,
             activo=filters.activo,
             email_verificado=filters.email_verificado,
             skip=pagination.offset,

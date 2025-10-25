@@ -32,14 +32,23 @@ class UsuarioRepository:
         await self.session.commit()
         await self.session.refresh(usuario)
         return usuario
-    
-    async def get_by_id(self, user_id: str) -> Optional[Usuario]:
+
+   #Cambie el get_by_id - Usuario.id == user_id) para hacer la conversion a INT 
+    async def get_by_id(self, user_id) -> Optional[Usuario]:
         """Obtiene usuario por ID."""
+        try:   
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            logger.warning(f"ID de usuario inválido recibido: {user_id}")
+            return None    
+                
         result = await self.session.execute(
-            select(Usuario).where(Usuario.id == user_id)
+            select(Usuario).where(Usuario.id == int(user_id))
         )
         return result.scalar_one_or_none()
-    
+
+
+
     async def get_by_email(self, email: str) -> Optional[Usuario]:
         """Obtiene usuario por email."""
         result = await self.session.execute(
@@ -76,12 +85,12 @@ class UsuarioRepository:
             .values(ultimo_login=datetime.utcnow())
         )
         await self.session.commit()
-    
+    #Coloque user_id por int(user_id)
     async def update_password(self, user_id: int, password_hash: str) -> None:
         """Actualiza la contraseña de un usuario."""
         await self.session.execute(
             update(Usuario)
-            .where(Usuario.id == user_id)
+            .where(Usuario.id == int(user_id))
             .values(password_hash=password_hash)
         )
         await self.session.commit()

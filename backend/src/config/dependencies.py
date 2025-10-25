@@ -85,7 +85,8 @@ async def get_current_user_id(
         raise UnauthorizedException("Token de autenticación requerido")
     
     payload = await decode_token(token)
-    user_id = payload.get("sub")  # "sub" es el claim estándar para user_id
+    #Cambien payload.get("sub") por int(payload.get("sub"))
+    user_id = int (payload.get("sub"))  # "sub" es el claim estándar para user_id
     
     if not user_id:
         raise UnauthorizedException("Token inválido: falta user_id")

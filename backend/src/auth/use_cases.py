@@ -211,7 +211,10 @@ class RefreshTokenUseCase:
         """
         # Verificar refresh token JWT
         payload = jwt_service.verify_refresh_token(refresh_token)
-        user_id = payload["user_id"]
+        #Cambien user_id = payload["user_id"] por user_id = payload.get("user_id") or payload.get("sub")
+
+        user_id = payload.get("user_id") or payload.get("sub")
+
         
         # Verificar que el token exista en BD y esté válido
         token_repo = RefreshTokenRepository(session)
@@ -234,9 +237,10 @@ class RefreshTokenUseCase:
         })
         
         logger.info(f"Access token renovado para usuario: {usuario.email}")
-        
+        #Coloque el campo refresh_Token 
         return {
             "access_token": new_access_token,
+            "refresh_token":refresh_token,
             "token_type": "bearer",
             "expires_in": 3600,
         }
