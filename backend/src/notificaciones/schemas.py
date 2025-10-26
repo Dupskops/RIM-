@@ -42,7 +42,8 @@ class NotificacionMasivaCreate(BaseModel):
     datos_adicionales: Optional[dict[str, Any]] = None
     accion_url: Optional[str] = Field(default=None, max_length=500)
     accion_tipo: Optional[str] = Field(default=None, max_length=50)
-
+    #Agregue el expira_en 
+    expira_en: Optional[datetime] = Field(default=None, description="Fecha de expiración")
 
 class NotificacionFilterParams(FilterParams):
     """Parámetros de filtrado para notificaciones."""

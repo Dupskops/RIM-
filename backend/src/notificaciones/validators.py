@@ -26,24 +26,21 @@ def validate_mensaje(mensaje: Optional[str]) -> None:
     if mensaje and len(mensaje) > 1000:
         raise ValueError("El mensaje no puede exceder los 1000 caracteres")
 
+#Valida la url 
+def validate_accion_url(accion_url: str):
+    import re
+    import logging
+    logger = logging.getLogger(__name__)
 
-def validate_accion_url(url: Optional[str]) -> None:
-    """Valida una URL de acción."""
-    if not url:
-        return
+    logger.info(f"📩 Recibida URL: {accion_url}")
+    if not accion_url:
+        raise ValueError("La URL de acción está vacía")
     
-    # Patrón básico para URLs
-    url_pattern = re.compile(
-        r'^https?://'  # http:// o https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # dominio
-        r'localhost|'  # localhost
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # IP
-        r'(?::\d+)?'  # puerto opcional
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE
-    )
-    
-    if not url_pattern.match(url):
+    pattern = r"^https?://"
+    if not re.match(pattern, accion_url):
+        logger.warning(f"URL inválida: {accion_url}")
         raise ValueError("La URL de acción no es válida")
+
 
 
 def validate_horario_no_molestar(
