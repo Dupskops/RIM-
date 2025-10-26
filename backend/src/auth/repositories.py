@@ -4,12 +4,12 @@ Capa de acceso a datos para usuarios y tokens.
 """
 from typing import Optional, List
 from sqlalchemy import select, update, delete
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 import logging
 
 from .models import Usuario, RefreshToken, PasswordResetToken, EmailVerificationToken
-from src.shared.exceptions import ResourceNotFoundException
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +51,14 @@ class UsuarioRepository:
 
     async def get_by_email(self, email: str) -> Optional[Usuario]:
         """Obtiene usuario por email."""
-        result = await self.session.execute(
-            select(Usuario).where(Usuario.email == email)
-        )
-        return result.scalar_one_or_none()
+        try:
+            result = await self.session.execute(
+                select(Usuario).where(Usuario.email == email)
+            )
+            return result.scalar_one_or_none()
+        except SQLAlchemyError:
+            logger.exception("Error al obtener usuario por email=%s", email)
+            raise
     
     async def get_all(
         self,
