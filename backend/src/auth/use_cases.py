@@ -50,69 +50,77 @@ class RegisterUserUseCase:
         Raises:
             ResourceAlreadyExistsException: Si el email ya existe
         """
-        usuario_repo = UsuarioRepository(session)
-        
-        # Verificar que el email no exista
-        if await usuario_repo.email_exists(data.email):
-            raise ResourceAlreadyExistsException(
-                "Usuario",
-                f"El email {data.email} ya está registrado"
+        try:
+            usuario_repo = UsuarioRepository(session)
+
+            # Verificar que el email no exista
+            if await usuario_repo.email_exists(data.email):
+                raise ResourceAlreadyExistsException(
+                    "Usuario",
+                    f"El email {data.email} ya está registrado"
+                )
+
+            # Hashear contraseña (no loguear la contraseña)
+            password_hash = password_service.hash_password(data.password)
+
+            # Crear usuario
+            usuario = Usuario(
+                email=data.email,
+                password_hash=password_hash,
+                nombre=data.nombre,
+                telefono=data.telefono,
+                email_verificado=False,
+                activo=True,
+                rol="user",  # Todos los nuevos usuarios son "user" por defecto
             )
-        
-        # Hashear contraseña
-        password_hash = password_service.hash_password(data.password)
-        
-        # Crear usuario
-        usuario = Usuario(
-            email=data.email,
-            password_hash=password_hash,
-            nombre=data.nombre,
-            telefono=data.telefono,
-            email_verificado=False,
-            activo=True,
-            rol="user",  # Todos los nuevos usuarios son "user" por defecto
-        )
-        
-        usuario = await usuario_repo.create(usuario)
-        
-        # Crear token de verificación si se solicita
-        verification_token = None
-        if create_verification_token:
-            token_repo = EmailVerificationTokenRepository(session)
-            verification_token = EmailVerificationToken(
+
+            usuario = await usuario_repo.create(usuario)
+
+            # Crear token de verificación si se solicita
+            # verification_token = None
+            if create_verification_token:
+                token_repo = EmailVerificationTokenRepository(session)
+                verification_token = EmailVerificationToken(
+                    usuario_id=usuario.id,  # Mantener como integer
+                    token=password_service.generate_verification_token(),
+                    expires_at=datetime.utcnow() + timedelta(hours=24),
+                )
+                verification_token = await token_repo.create(verification_token)
+                logger.debug("✅ Created verification token: %s", verification_token.token)
+
+            # Crear tokens JWT (el JWT usa string para el subject)
+            tokens = auth_service.create_tokens(str(usuario.id), usuario.email)
+
+            # Guardar refresh token en BD
+            refresh_token_repo = RefreshTokenRepository(session)
+            refresh_token_model = RefreshToken(
                 usuario_id=usuario.id,  # Mantener como integer
-                token=password_service.generate_verification_token(),
-                expires_at=datetime.utcnow() + timedelta(hours=24),
+                token=tokens["refresh_token"],
+                expires_at=datetime.utcnow() + timedelta(days=30),
             )
-            verification_token = await token_repo.create(verification_token)
-        
-        # Crear tokens JWT (el JWT usa string para el subject)
-        tokens = auth_service.create_tokens(str(usuario.id), usuario.email)
-        
-        # Guardar refresh token en BD
-        refresh_token_repo = RefreshTokenRepository(session)
-        refresh_token_model = RefreshToken(
-            usuario_id=usuario.id,  # Mantener como integer
-            token=tokens["refresh_token"],
-            expires_at=datetime.utcnow() + timedelta(days=30),
-        )
-        await refresh_token_repo.create(refresh_token_model)
-        
-        # Emitir evento
-        await events.emit_user_registered(
-            user_id=str(usuario.id),
-            email=usuario.email,
-            nombre=usuario.nombre,
-            verification_token=verification_token.token if verification_token else None,
-        )
-        
-        logger.info(f"Usuario registrado: {usuario.email}")
-        
-        return {
-            "user": usuario,
-            "tokens": tokens,
-            "verification_token": verification_token.token if verification_token else None,
-        }
+            await refresh_token_repo.create(refresh_token_model)
+
+            # Emitir evento
+            await events.emit_user_registered(
+                user_id=str(usuario.id),
+                email=usuario.email,
+                nombre=usuario.nombre,
+                verification_token=verification_token.token if verification_token else None,
+            )
+
+            logger.info("Usuario registrado: %s", usuario.email)
+
+            return {
+                "user": usuario,
+                "tokens": tokens,
+                "verification_token": verification_token.token if verification_token else None,
+            }
+        except ResourceAlreadyExistsException:
+            # exceptions de negocio conocidas se propagan sin log de stacktrace
+            raise
+        except Exception:
+            logger.exception("Error registrando usuario email=%s", data.email)
+            raise
 
 
 class LoginUserUseCase:
@@ -336,36 +344,40 @@ class RequestPasswordResetUseCase:
         Returns:
             Token de reset (o None si el email no existe - por seguridad no revelar)
         """
-        usuario_repo = UsuarioRepository(session)
-        usuario = await usuario_repo.get_by_email(email)
-        
-        # Por seguridad, no revelar si el email existe o no
-        if not usuario:
-            logger.warning(f"Intento de reset para email no existente: {email}")
-            return None
-        
-        # Generar token
-        reset_token = password_service.generate_reset_token()
-        
-        # Guardar en BD
-        token_repo = PasswordResetTokenRepository(session)
-        token_model = PasswordResetToken(
-            usuario_id=str(usuario.id),
-            token=reset_token,
-            expires_at=datetime.utcnow() + timedelta(hours=1),
-        )
-        await token_repo.create(token_model)
-        
-        # Emitir evento (para enviar email)
-        await events.emit_password_reset_requested(
-            user_id=str(usuario.id),
-            email=usuario.email,
-            reset_token=reset_token,
-        )
-        
-        logger.info(f"Token de reset generado para: {email}")
-        
-        return reset_token
+        try:
+            usuario_repo = UsuarioRepository(session)
+            usuario = await usuario_repo.get_by_email(email)
+
+            # Por seguridad, no revelar si el email existe o no
+            if not usuario:
+                logger.warning("Intento de reset para email no existente: %s", email)
+                raise ResourceNotFoundException("Usuario", email)
+
+            # Generar token
+            reset_token = password_service.generate_reset_token()
+            # Guardar en BD
+            token_repo = PasswordResetTokenRepository(session)
+            token_model = PasswordResetToken(
+                usuario_id=usuario.id,
+                token=reset_token,
+                expires_at=datetime.utcnow() + timedelta(hours=1),
+            )
+            await token_repo.create(token_model)
+
+            # Emitir evento (para enviar email)
+            await events.emit_password_reset_requested(
+                user_id=str(usuario.id),
+                email=usuario.email,
+                reset_token=reset_token,
+            )
+
+            logger.info("Token de reset generado para: %s", email)
+
+            return reset_token
+        except Exception:
+            # Log con stacktrace para diagnóstico y relanzar
+            logger.exception("Error solicitando reset de contraseña para email=%s", email)
+            raise
 
 
 class ResetPasswordUseCase:
