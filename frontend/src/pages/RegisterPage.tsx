@@ -37,7 +37,7 @@ const RegisterPage = () => {
       });
       
       toast.success('¡Cuenta creada exitosamente!');
-      navigate({ to: '/dashboard' });
+      navigate({ to: '/home' });
     } catch (error) {
       // Manejar errores de validación de Valibot
       if (error instanceof v.ValiError) {

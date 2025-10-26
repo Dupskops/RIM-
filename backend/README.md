@@ -41,6 +41,12 @@ source venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
+4. Copiar el env y colocar la url correcta de la bd
+
+```bash
+cp .env.example .env
+```
+
 ## 🚀 Ejecutar el servidor
 
 ```bash
