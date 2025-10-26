@@ -6,7 +6,7 @@ from typing import Optional, List
 from sqlalchemy import select, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 
 from .models import Usuario, RefreshToken, PasswordResetToken, EmailVerificationToken
@@ -34,7 +34,7 @@ class UsuarioRepository:
         return usuario
 
    #Cambie el get_by_id - Usuario.id == user_id) para hacer la conversion a INT 
-    async def get_by_id(self, user_id) -> Optional[Usuario]:
+    async def get_by_id(self, user_id: str | int) -> Optional[Usuario]:
         """Obtiene usuario por ID."""
         try:   
             user_id = int(user_id)
