@@ -17,11 +17,43 @@ class Settings(BaseSettings):
     APP_DESCRIPTION: str = "API Backend para gestión de motos inteligentes con IA"
     DEBUG: bool = False
     API_PREFIX: str = "/api"
+    # ============================================
+    # LOGGING
+    # ============================================
+    LOG_LEVEL: str = "DEBUG"
+    LOG_COLORS: bool = True
+    COLORAMA_ENABLED: bool = True
+    # Usar loguru como backend de logging (si True, loguru interceptará logging estándar)
+    LOG_USE_LOGURU: bool = False
+    # Formato opcional para Loguru (si se desea personalizar)
+    # Formato por defecto para Loguru: incluye una tabulación entre el nombre y el mensaje
+    LOGURU_FORMAT: str = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}\t{message}"
+    # Lista de loggers a forzar en DEBUG (vacío por defecto).
+    # Preferible controlar el nivel de logging global mediante LOG_LEVEL.
+    LOG_MODULE_DEBUG: list[str] = []
+    # Mapear módulos (clave: nombre corto del módulo dentro de src, p.ej. 'auth')
+    # a códigos ANSI para colorear específicamente cada módulo. Si está vacío,
+    # se usa la paleta determinística por hash.
+    LOG_MODULE_COLORS: dict[str, str] = {
+        "auth": "\x1b[94m",         # bright blue
+        "usuarios": "\x1b[95m",     # bright magenta
+        "motos": "\x1b[92m",        # bright green
+        "suscripciones": "\x1b[96m",# bright cyan
+        "sensores": "\x1b[93m",     # bright yellow
+        "fallas": "\x1b[91m",       # bright red
+        "mantenimiento": "\x1b[90m",# bright black / grey
+        "chatbot": "\x1b[94m",      # bright blue
+        "notificaciones": "\x1b[96m",# bright cyan
+        "ml": "\x1b[95m",           # bright magenta
+        "integraciones": "\x1b[93m",# bright yellow
+        "shared": "\x1b[92m",       # bright green
+        "main": "\x1b[97m",         # bright white (único para entrypoint)
+    }
     
     # ============================================
     # BASE DE DATOS
     # ============================================
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rim_db"
+    DATABASE_URL: str = "postgresql+asyncpg://YOU_USERNAME:YOUR_PASSWORD@localhost:5432/YOUR_DB_NAME"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     DATABASE_ECHO: bool = False  # Log de queries SQL

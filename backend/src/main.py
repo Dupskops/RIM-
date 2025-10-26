@@ -6,11 +6,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+from datetime import datetime, timezone
 
 from .config.settings import settings
 from .config.database import init_db, close_db, check_db_connection
 from .shared.event_bus import event_bus
 from .integraciones.llm_provider import get_llm_provider
+
+# Configure logging early using central config
+from .config.logging import configure_logging
+
+configure_logging(settings)
 
 # Importar routers de todos los módulos
 from .auth import auth_router
@@ -25,7 +31,6 @@ from .notificaciones import notificaciones_router
 from .ml import ml_router
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================
 # CONFIGURACIÓN DE EVENT HANDLERS
@@ -310,5 +315,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,
-        log_level="info"
+        log_level=(settings.LOG_LEVEL or "info").lower()
     )

@@ -18,6 +18,7 @@ from .dependencies import (
     require_auth,
     require_admin,
 )
+from .logging import configure_logging
 
 __all__ = [
     # Settings
@@ -37,4 +38,6 @@ __all__ = [
     "get_optional_user",
     "require_auth",
     "require_admin",
+    # Logging
+    "configure_logging",
 ]
