@@ -1,1 +1,488 @@
 @import "tailwindcss";
+
+/* Mantener únicamente variables de color (usadas desde Tailwind / inline styles) */
+:root {
+  --accent: #fe7743; /* naranja */
+  --card: #273f4f; /* oscuro azulado */
+  --muted: #000000;
+  --accent-2: #447d9b;
+  --color-2: #D7D7D7;
+  --bg: #ffffff;
+  --bg2: #b54b00;
+  --glass: rgba(215,215,215,0.04);
+  --accent-shadow: 0 18px 40px rgba(254,119,67,0.14);
+}
+
+@layer base {
+  body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+}
+
+/* Nota: El resto del estilo se maneja con utilidades Tailwind en los componentes */
+
+    .hero-image {
+        height: clamp(250px, 50vw, 500px);
+        border-radius: 10px;
+        background-repeat: no-repeat;
+        background-position: center bottom;
+        box-shadow: var(--shadow-2);
+        transform: translateY(0);
+        animation: float 6s ease-in-out infinite;
+    }
+    @keyframes float {
+        0% {
+            transform: translateY(0);
+        }
+        50% {
+            transform: translateY(-8px);
+        }
+        100% {
+            transform: translateY(0);
+        }
+    }
+
+    /* Quick stats */
+    .quick-stats {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-sm);
+        margin-top: calc(var(--sp-sm) - 2px);
+    }
+    .stat {
+        background: linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.01),
+            transparent
+        );
+        padding: var(--sp-sm);
+        border-radius: 10px;
+        display: flex;
+        gap: var(--sp-sm);
+        align-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.02);
+        backdrop-filter: blur(4px);
+        animation: fadeInUp 0.45s ease both;
+    }
+    .stat:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 18px 30px rgba(0, 0, 0, 0.35);
+        transition: all 0.28s ease;
+    }
+    .stat-icon {
+        width: clamp(36px, 9vw, 56px);
+        height: clamp(36px, 9vw, 56px);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--accent), var(--accent-2));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-weight: 700;
+        flex-shrink: 0;
+        font-size: clamp(14px, 3.6vw, 18px);
+    }
+    .stat-body {
+        display: flex;
+        flex-direction: column;
+    }
+    .stat-value {
+        font-weight: 800;
+        color: #fff;
+        font-size: clamp(14px, 4vw, 18px);
+    }
+    .stat-label {
+        font-size: 12px;
+        color: var(--color-2);
+    }
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Cards */
+    .card {
+        background: var(--card);
+        padding: calc(var(--sp-sm));
+        border-radius: 12px;
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.38);
+        border: 1px solid rgba(255, 255, 255, 0.02);
+    }
+    .last-ride {
+        display: block;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 22px;
+        padding: 12px;
+    }
+    .last-ride-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        align-items: center;
+    }
+    .last-ride-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px;
+    }
+    .last-ride-item .lr-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent);
+        box-shadow: var(--accent-shadow);
+        flex-shrink: 0;
+    }
+    .last-ride-item .lr-label {
+        font-size: 12px;
+        color: var(--color-2);
+        margin-bottom: 4px;
+        font-weight: 700;
+    }
+    .last-ride-item .lr-value {
+        font-size: 18px;
+        color: #fff;
+        font-weight: 800;
+    }
+    .card-left {
+        flex: 1;
+    }
+    .card-title {
+        font-size: 1.2em;
+        color: var(--color-2);
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .card-title.small {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 700;
+    }
+    .ride-distance {
+        font-size: clamp(16px, 4.2vw, 20px);
+        font-weight: 800;
+        color: #fff;
+    }
+    .ride-time {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 4px;
+    }
+    .card-thumb {
+        width: clamp(70px, 18vw, 140px);
+        height: clamp(46px, 11vw, 90px);
+        border-radius: 8px;
+        background-image: url("/assets/map-thumb.png");
+        background-size: cover;
+        background-position: center;
+        box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Maintenance */
+    .maintenance .maint-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 22px;
+        padding: 5%;
+    }
+    .maint-name {
+        font-weight: 800;
+        color: #fff;
+    }
+    .maint-info .distance {
+        color: var(--muted);
+        font-weight: 700;
+    }
+    .progress-wrap {
+        height: 6px;
+        background: rgba(255, 255, 255, 0.02);
+        border-radius: 999px;
+        margin-top: 6px;
+        overflow: hidden;
+    }
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        border-radius: 999px;
+        box-shadow: var(--accent-shadow);
+        animation: loadBar 1.6s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+    }
+    @keyframes loadBar {
+        from {
+            width: 0;
+        }
+        to {
+            width: 35%;
+        }
+    }
+
+    /* Alerts & Tips */
+    .cards-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+    }
+    .alert-card {
+        background: linear-gradient(
+            180deg,
+            rgba(254, 119, 67, 0.06),
+            rgba(254, 119, 67, 0.02)
+        );
+        border: 1px solid rgba(254, 119, 67, 0.08);
+    }
+    .tips-card {
+        background: linear-gradient(
+            180deg,
+            rgba(68, 125, 155, 0.03),
+            transparent
+        );
+    }
+    .alert-item {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+    }
+    .alert-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        margin-top: 4px;
+    }
+    .alert-title {
+        font-weight: 700;
+        color: #fff;
+    }
+    .link {
+        background: transparent;
+        border: 0;
+        color: var(--accent);
+        font-weight: 700;
+        margin-top: 4px;
+        padding: 0;
+        cursor: pointer;
+    }
+
+    /* FAB y Nav */
+    .fab {
+        position: fixed;
+        right: 36px;
+        bottom: 36px;
+        background: var(--accent);
+        border: 0;
+        color: #071218;
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--accent-shadow);
+        cursor: pointer;
+        transition: transform 0.18s ease;
+    }
+    .fab:hover {
+        transform: translateY(-6px);
+    }
+    .bottom-nav {
+        display: none;
+    }
+    .nav-item {
+        background: transparent;
+        border: 0;
+        color: var(--bg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 8px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 400;
+    }
+    .nav-item.active {
+        color: var(--bg);
+        background: rgba(226, 70, 8, 0.787);
+    }
+    .ni-icon {
+        font-size: clamp(14px, 3.4vw, 18px);
+    }
+    .ni-label {
+        font-size: 80%;
+    }
+
+    .animate-in {
+        animation: fadeInUp 0.5s ease both;
+    }
+
+/* Responsive: mobile-first then desktop overrides */
+@layer utilities {
+    @media (max-width: 899px) {
+        .content {
+            max-width: 440px;
+            margin: 6px auto 90px;
+            padding: 0 10px;
+        }
+        .card-thumb {
+            width: 80px;
+            height: 50px;
+        }
+        .cards-grid {
+            grid-template-columns: 1fr 1fr;
+        }
+        .side-nav {
+            display: none;
+        }
+        .fab {
+            right: 18px;
+            bottom: 86px;
+        }
+        .bottom-nav {
+            display: flex;
+            position: fixed;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 12px;
+            width: min(92%, 360px);
+            background: var(--accent);
+            border-radius: 12px;
+            /* eliminar padding arriba/abajo, mantener padding horizontal */
+            gap: 8px;
+            justify-content: space-between;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.56);
+            align-items: center;
+        }
+        /* distribuir nav-items en 3 columnas iguales dentro del bottom-nav */
+        .bottom-nav .nav-item {
+            flex: 1 1 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 0; /* sin padding vertical extra en el contenedor */
+            border-radius: 8px;
+            color: inherit; /* los iconos lucide heredan currentColor */
+        }
+        .bottom-nav .ni-icon {
+            color: inherit;
+        }
+
+        /* Extra small phones (<=360px) */
+        @media (max-width: 360px) {
+            .content { max-width: 360px; padding: 0 8px; }
+            .hero-image { height: clamp(140px, 30vw, 220px); }
+            .card { padding: var(--sp-xs); }
+            .ride-distance { font-size: clamp(14px, 5.2vw, 18px); }
+            .fab { right: 12px; bottom: 80px; width: 48px; height: 48px; }
+            .bottom-nav { bottom: 10px; }
+            .ni-icon { font-size: 14px; }
+        }
+    }
+
+    @media (min-width: 900px) {
+        .content {
+            display: grid;
+            grid-template-columns: 1fr var(--sidebar-width);
+            gap: 18px;
+            align-items: start;
+            padding: 10px 20px 60px;
+            max-width: var(--max-width);
+            margin: 18px auto 60px;
+        }
+        .col-main {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .col-aside {
+            position: sticky;
+            top: 24px;
+            height: calc(100vh - 120px);
+            align-self: start;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .hero-image {
+            height: 800px;
+        }
+        .quick-stats {
+            flex-direction: column;
+        }
+        .cards-grid {
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+        .side-nav {
+            display: flex;
+            position: fixed;
+            left: 24px;
+            top: 84px;
+            flex-direction: column;
+            gap: 8px;
+            padding: 6px;
+            background: var(--accent);
+            z-index: 80;
+        }
+        .bottom-nav {
+            display: none;
+        }
+        .fab {
+            right: 36px;
+            bottom: 36px;
+        }
+    }
+
+    @media (min-width: 1300px) {
+        .content {
+            grid-template-columns: 1fr 420px;
+            max-width: 1300px;
+        }
+        .hero-image {
+            height: 500px;
+        }
+        .stat {
+            padding: 12px;
+        }
+        .stat-icon {
+            width: 56px;
+            height: 56px;
+            font-size: 18px;
+        }
+        .card-thumb {
+            width: 130px;
+            height: 82px;
+        }
+        .side-nav {
+            left: 40px;
+        }
+    }
+
+    /* Nav indicator + focus styles */
+    .nav-indicator {
+        background: var(--bg2);
+        transition: transform 320ms cubic-bezier(0.2,0.8,0.2,1);
+        will-change: transform;
+        box-shadow: 0 8px 18px rgba(0,0,0,0.22);
+        opacity: 0.98;
+        z-index: 1;
+    }
+    .nav-button:focus {
+        outline: none;
+        box-shadow: 0 0 0 6px rgba(181,75,0,0.12);
+        border-radius: 8px;
+    }
+}

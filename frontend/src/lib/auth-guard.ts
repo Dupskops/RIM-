@@ -68,6 +68,6 @@ export const requireAuth = () => {
  */
 export const requireGuest = () => {
   if (isAuthenticated()) {
-    throw redirect({ to: '/dashboard' });
+    throw redirect({ to: '/home' });
   }
 };

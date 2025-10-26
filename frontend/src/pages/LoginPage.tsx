@@ -25,7 +25,7 @@ const LoginPage = () => {
       // Si la validación pasa, hacer login
       await login(validatedData.email, validatedData.password);
       toast.success("¡Bienvenido a RIM!");
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/home" });
     } catch (error) {
       // Manejar errores de validación de Valibot
       if (error instanceof v.ValiError) {
