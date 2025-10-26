@@ -49,9 +49,9 @@ class UsuarioDeactivatedEvent(Event):
 @dataclass
 class UsuarioActivatedEvent(Event):
     """Evento emitido cuando un admin activa un usuario."""
-    usuario_id: str = ""
+    usuario_id: int = 0
     email: str = ""
-    activated_by_admin_id: str = ""
+    activated_by_admin_id: int = 0
 
 
 # ============================================
@@ -145,9 +145,9 @@ async def emit_usuario_deactivated(
 
 
 async def emit_usuario_activated(
-    usuario_id: str,
+    usuario_id: int,
     email: str,
-    activated_by_admin_id: str
+    activated_by_admin_id: int
 ) -> None:
     """
     Emite evento de usuario activado por admin.

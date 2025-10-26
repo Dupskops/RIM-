@@ -17,7 +17,7 @@ class UsuarioService:
         password: str,
         nombre: str,
         telefono: str | None = None,
-        es_admin: bool = False,
+        rol: str = "user",
         activo: bool = True
     ) -> Dict[str, Any]:
         """
@@ -40,7 +40,7 @@ class UsuarioService:
             "nombre": nombre,
             "telefono": telefono,
             "email_verificado": False,  # Por defecto no verificado
-            "es_admin": es_admin,
+            "rol": rol,
             "activo": activo,
         }
     

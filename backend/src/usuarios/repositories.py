@@ -2,12 +2,18 @@
 Repositorios para gestión de usuarios.
 Maneja acceso a base de datos para usuarios.
 """
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timedelta
 
 from src.auth.models import Usuario
+
+# Logger para el repositorio de usuarios
+logger = logging.getLogger(__name__)
 
 
 class UsuarioRepository:
@@ -16,17 +22,35 @@ class UsuarioRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
     
-    async def get_by_id(self, usuario_id: int) -> Optional[Usuario]:
-        """Obtiene usuario por ID."""
-        result = await self.session.execute(
-            select(Usuario).where(
-                and_(
-                    Usuario.id == usuario_id,
-                    Usuario.deleted_at.is_(None)
+    async def get_by_id(self, usuario_id: Union[int, str]) -> Optional[Usuario]:
+        """Obtiene usuario por ID.
+
+        Acepta int o str; si recibe str intenta convertir a int para evitar
+        errores de tipo al ejecutar la consulta en PostgreSQL.
+        """
+        try:
+            # Asegurar que el parámetro usado en la consulta sea un entero
+            if isinstance(usuario_id, str):
+                try:
+                    usuario_id = int(usuario_id)
+                except (ValueError, TypeError):
+                    logger.exception("ID de usuario inválido: %s", usuario_id)
+                    raise ValueError("usuario_id must be an integer")
+
+            result = await self.session.execute(
+                select(Usuario).where(
+                    and_(
+                        Usuario.id == usuario_id,
+                        Usuario.deleted_at.is_(None)
+                    )
                 )
             )
-        )
-        return result.scalar_one_or_none()
+            return result.scalar_one_or_none()
+        except SQLAlchemyError:
+            # Loguear con stacktrace para saber exactamente por qué falló
+            logger.exception("Error al obtener usuario por id=%s", usuario_id)
+            # Relanzar para que la capa superior decida cómo manejarlo
+            raise
     
     async def get_by_email(self, email: str) -> Optional[Usuario]:
         """Obtiene usuario por email."""
@@ -193,7 +217,7 @@ class UsuarioRepository:
         await self.session.flush()
         return True
     
-    async def activate_usuario(self, usuario_id: str) -> bool:
+    async def activate_usuario(self, usuario_id: int) -> bool:
         """
         Activa un usuario.
         

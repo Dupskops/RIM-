@@ -51,7 +51,7 @@ class ForbiddenException(HTTPException):
 class ResourceNotFoundException(HTTPException):
     """Recurso no encontrado."""
     
-    def __init__(self, resource: str, resource_id: str):
+    def __init__(self, resource: str, resource_id: int | str):
         super().__init__(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{resource} con ID {resource_id} no encontrado",

@@ -112,7 +112,7 @@ async def get_usuario_stats(
     dependencies=[Depends(require_admin)]
 )
 async def get_usuario(
-    usuario_id: str,
+    usuario_id: int,
     session: AsyncSession = Depends(get_db),
 ):
     """Obtiene un usuario por ID."""
@@ -133,7 +133,7 @@ async def get_usuario(
     dependencies=[Depends(require_admin)]
 )
 async def update_usuario(
-    usuario_id: str,
+    usuario_id: int,
     data: UpdateUsuarioRequest,
     session: AsyncSession = Depends(get_db),
     admin_id: str = Depends(get_current_user_id)
@@ -156,7 +156,7 @@ async def update_usuario(
     dependencies=[Depends(require_admin)]
 )
 async def delete_usuario(
-    usuario_id: str,
+    usuario_id: int,
     session: AsyncSession = Depends(get_db),
     admin_id: str = Depends(get_current_user_id)
 ):
@@ -177,7 +177,7 @@ async def delete_usuario(
     dependencies=[Depends(require_admin)]
 )
 async def deactivate_usuario(
-    usuario_id: str,
+    usuario_id: int,
     session: AsyncSession = Depends(get_db),
     admin_id: str = Depends(get_current_user_id)
 ):
@@ -198,7 +198,7 @@ async def deactivate_usuario(
     dependencies=[Depends(require_admin)]
 )
 async def activate_usuario(
-    usuario_id: str,
+    usuario_id: int,
     session: AsyncSession = Depends(get_db),
     admin_id: str = Depends(get_current_user_id)
 ):

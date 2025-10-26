@@ -2,7 +2,7 @@
 Casos de uso de gestión de usuarios.
 Orquesta la lógica de negocio de administración de usuarios.
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -63,7 +63,7 @@ class CreateUsuarioUseCase:
             password=data.password,
             nombre=data.nombre,
             telefono=data.telefono,
-            es_admin=data.es_admin,
+            rol=data.rol,
             activo=data.activo,
         )
         
@@ -90,7 +90,7 @@ class GetUsuarioUseCase:
     async def execute(
         self,
         session: AsyncSession,
-        usuario_id: str
+        usuario_id: Union[int, str]
     ) -> Usuario:
         """
         Obtiene un usuario por su ID.
@@ -156,9 +156,9 @@ class UpdateUsuarioUseCase:
     async def execute(
         self,
         session: AsyncSession,
-        usuario_id: str,
+        usuario_id: Union[int, str],
         data: UpdateUsuarioRequest,
-        admin_id: str
+        admin_id: Union[int, str]
     ) -> Usuario:
         """
         Actualiza un usuario existente.
@@ -193,9 +193,9 @@ class UpdateUsuarioUseCase:
             changes["telefono"] = {"old": usuario.telefono, "new": data.telefono}
             usuario.telefono = data.telefono  # type: ignore
         
-        if data.es_admin is not None and data.es_admin != usuario.es_admin:
-            changes["es_admin"] = {"old": usuario.es_admin, "new": data.es_admin}
-            usuario.es_admin = data.es_admin  # type: ignore
+        if data.rol is not None and data.rol != usuario.rol:
+            changes["rol"] = {"old": usuario.rol, "new": data.rol}
+            usuario.rol = data.rol  # type: ignore
         
         if data.activo is not None and data.activo != usuario.activo:
             changes["activo"] = {"old": usuario.activo, "new": data.activo}
@@ -209,7 +209,7 @@ class UpdateUsuarioUseCase:
             await events.emit_usuario_updated(
                 usuario_id=str(usuario.id),
                 email=usuario.email,
-                updated_by_admin_id=admin_id,
+                updated_by_admin_id=str(admin_id),
                 changes=changes,
             )
             
@@ -227,8 +227,8 @@ class DeleteUsuarioUseCase:
     async def execute(
         self,
         session: AsyncSession,
-        usuario_id: str,
-        admin_id: str
+        usuario_id: Union[int, str],
+        admin_id: Union[int, str]
     ) -> None:
         """
         Elimina un usuario (soft delete).
@@ -249,13 +249,13 @@ class DeleteUsuarioUseCase:
             raise ResourceNotFoundException("Usuario", usuario_id)
         
         # Eliminar
-        await repo.delete(usuario_id)
-        
+        await repo.delete(str(usuario_id))
+
         # Emitir evento
         await events.emit_usuario_deleted(
-            usuario_id=usuario_id,
+            usuario_id=str(usuario_id),
             email=usuario.email,
-            deleted_by_admin_id=admin_id,
+            deleted_by_admin_id=str(admin_id),
         )
         
         logger.info(f"Usuario {usuario.email} eliminado por admin {admin_id}")
@@ -267,8 +267,8 @@ class DeactivateUsuarioUseCase:
     async def execute(
         self,
         session: AsyncSession,
-        usuario_id: str,
-        admin_id: str
+        usuario_id: Union[int, str],
+        admin_id: Union[int, str]
     ) -> None:
         """
         Desactiva un usuario.
@@ -289,15 +289,15 @@ class DeactivateUsuarioUseCase:
             raise ResourceNotFoundException("Usuario", usuario_id)
         
         # Desactivar
-        success = await repo.deactivate_usuario(usuario_id)
+        success = await repo.deactivate_usuario(str(usuario_id))
         if not success:
             raise ResourceNotFoundException("Usuario", usuario_id)
         
         # Emitir evento
         await events.emit_usuario_deactivated(
-            usuario_id=usuario_id,
+            usuario_id=str(usuario_id),
             email=usuario.email,
-            deactivated_by_admin_id=admin_id,
+            deactivated_by_admin_id=str(admin_id),
         )
         
         logger.info(f"Usuario {usuario.email} desactivado por admin {admin_id}")
@@ -309,8 +309,8 @@ class ActivateUsuarioUseCase:
     async def execute(
         self,
         session: AsyncSession,
-        usuario_id: str,
-        admin_id: str
+        usuario_id: Union[int, str],
+        admin_id: Union[int, str]
     ) -> None:
         """
         Activa un usuario.
@@ -331,15 +331,15 @@ class ActivateUsuarioUseCase:
             raise ResourceNotFoundException("Usuario", usuario_id)
         
         # Activar
-        success = await repo.activate_usuario(usuario_id)
+        success = await repo.activate_usuario(int(usuario_id))
         if not success:
             raise ResourceNotFoundException("Usuario", usuario_id)
         
         # Emitir evento
         await events.emit_usuario_activated(
-            usuario_id=usuario_id,
+            usuario_id=int(usuario_id),
             email=usuario.email,
-            activated_by_admin_id=admin_id,
+            activated_by_admin_id=int(admin_id),
         )
         
         logger.info(f"Usuario {usuario.email} activado por admin {admin_id}")
