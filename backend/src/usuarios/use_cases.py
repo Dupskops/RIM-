@@ -369,7 +369,7 @@ class GetUsuarioStatsUseCase:
         usuarios_inactivos = await repo.count_usuarios(activo=False)
         emails_verificados = await repo.count_usuarios(email_verificado=True)
         emails_sin_verificar = await repo.count_usuarios(email_verificado=False)
-        administradores = await repo.count_usuarios(es_admin=True)
+        administradores = await repo.count_usuarios(rol="admin")
         usuarios_recientes = await repo.count_recent_usuarios(days=7)
         
         return {
