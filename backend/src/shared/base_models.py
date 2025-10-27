@@ -43,7 +43,7 @@ class ApiResponse(BaseModel, Generic[T]):
         description="Indica si la operación fue exitosa"
     )
     message: str = Field(
-        ..., 
+        default="",
         description="Mensaje descriptivo de la operación",
         examples=["Operación exitosa", "Usuario creado correctamente"]
     )

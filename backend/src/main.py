@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 from datetime import datetime, timezone
+from typing import Dict, Any
 
 from .config.settings import settings
 from .config.database import init_db, close_db, check_db_connection
@@ -23,7 +24,7 @@ from .auth import auth_router
 from .usuarios import usuarios_router
 from .motos import motos_router
 from .suscripciones import suscripciones_router
-from .sensores import sensores_router
+from .sensores import sensores_router, websocket_router
 from .fallas import fallas_router
 from .mantenimiento import mantenimiento_router
 from .chatbot import chatbot_router
@@ -44,11 +45,9 @@ async def setup_event_handlers():
     
     # Importar clases de eventos
     from .sensores.events import AlertaSensorEvent, LecturaRegistradaEvent
-    from .fallas.events import FallaCriticaEvent, FallaDetectadaEvent, FallaResueltaEvent
+    from .fallas.events import FallaCriticaEvent, FallaResueltaEvent
     from .mantenimiento.events import (
         MantenimientoUrgenteEvent, 
-        MantenimientoVencidoEvent,
-        AlertaMantenimientoProximoEvent
     )
     from .ml.events import PrediccionGeneradaEvent, AnomaliaDetectadaEvent
     from .motos.events import KilometrajeUpdatedEvent
@@ -221,6 +220,8 @@ app.include_router(suscripciones_router, prefix=f"{settings.API_PREFIX}/suscripc
 
 # IoT y Sensores
 app.include_router(sensores_router, prefix=f"{settings.API_PREFIX}/sensores", tags=["Sensores IoT"])
+# WebSocket para telemetría en tiempo real
+app.include_router(websocket_router, tags=["WebSocket Telemetría"])
 
 # Fallas y Mantenimiento
 app.include_router(fallas_router, prefix=f"{settings.API_PREFIX}/fallas", tags=["Gestión de Fallas"])
@@ -247,11 +248,9 @@ async def root():
         "docs": f"{settings.API_PREFIX}/docs"
     }
 
-
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     """Health check para monitoreo con verificaciones de servicios."""
-    from datetime import datetime
     
     # Verificar servicios críticos
     db_healthy = await check_db_connection()
@@ -262,7 +261,7 @@ async def health_check():
     return {
         "status": status,
         "version": settings.APP_VERSION,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
             "database": "healthy" if db_healthy else "unhealthy",
             "api": "healthy"
@@ -270,8 +269,9 @@ async def health_check():
     }
 
 
+
 @app.get(f"{settings.API_PREFIX}/status")
-async def api_status():
+async def api_status() -> Dict[str, Any]:
     """Estado de la API y servicios."""
     # Verificar estado de servicios
     db_status = await check_db_connection()

@@ -58,6 +58,13 @@ class ResourceNotFoundException(HTTPException):
         )
 
 
+class NotFoundError(RIMException):
+    """Excepción para recursos no encontrados (sin HTTP)."""
+    
+    def __init__(self, message: str):
+        super().__init__(message, "NOT_FOUND")
+
+
 class ResourceAlreadyExistsException(HTTPException):
     """Recurso ya existe."""
     
@@ -79,6 +86,13 @@ class ValidationException(HTTPException):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=detail,
         )
+
+
+class ValidationError(RIMException):
+    """Excepción para errores de validación (sin HTTP)."""
+    
+    def __init__(self, message: str):
+        super().__init__(message, "VALIDATION_ERROR")
 
 
 # ============================================
