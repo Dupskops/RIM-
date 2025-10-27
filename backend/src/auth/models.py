@@ -36,6 +36,7 @@ class Usuario(BaseModel):
     
     # Información personal
     nombre = Column(String(255), nullable=False)
+    apellido = Column(String(255), nullable=True)
     telefono = Column(String(20), nullable=True)
     
     # Estado de la cuenta
@@ -44,7 +45,7 @@ class Usuario(BaseModel):
     rol = Column(String(20), default="user", nullable=False, index=True)
     
     # Metadata de login
-    ultimo_login = Column(DateTime, nullable=True)
+    ultimo_login = Column(DateTime(timezone=True), nullable=True)
     
     # Relaciones
     motos = relationship("Moto", back_populates="usuario", lazy="selectin")
@@ -62,6 +63,7 @@ class Usuario(BaseModel):
             "id": str(self.id),
             "email": self.email,
             "nombre": self.nombre,
+            "apellido": self.apellido,
             "telefono": self.telefono,
             "email_verificado": self.email_verificado,
             "activo": self.activo,
@@ -93,9 +95,9 @@ class RefreshToken(BaseModel):
     
     usuario_id = Column(Integer, nullable=False, index=True)
     token = Column(Text, unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     revocado = Column(Boolean, default=False, nullable=False)
-    revocado_at = Column(DateTime, nullable=True)
+    revocado_at = Column(DateTime(timezone=True), nullable=True)
     
     # Metadata de seguridad
     ip_address = Column(String(45), nullable=True)  # IPv6 puede ser hasta 45 chars
@@ -142,9 +144,9 @@ class PasswordResetToken(BaseModel):
     
     usuario_id = Column(Integer, nullable=False, index=True)
     token = Column(String(255), unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     usado = Column(Boolean, default=False, nullable=False)
-    usado_at = Column(DateTime, nullable=True)
+    usado_at = Column(DateTime(timezone=True), nullable=True)
     
     def __repr__(self):
         return f"<PasswordResetToken(usuario_id='{self.usuario_id}', usado={self.usado})>"
@@ -187,9 +189,9 @@ class EmailVerificationToken(BaseModel):
     
     usuario_id = Column(Integer, nullable=False, index=True)
     token = Column(String(255), unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     usado = Column(Boolean, default=False, nullable=False)
-    usado_at = Column(DateTime, nullable=True)
+    usado_at = Column(DateTime(timezone=True), nullable=True)
     
     def __repr__(self):
         return f"<EmailVerificationToken(usuario_id='{self.usuario_id}', usado={self.usado})>"
