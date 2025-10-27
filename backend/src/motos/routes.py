@@ -3,6 +3,7 @@ Rutas FastAPI para gestión de motos.
 """
 from typing import Annotated
 from fastapi import APIRouter, Depends, status
+from uuid import UUID
 
 from ..config.dependencies import get_db, get_current_user, require_admin
 from ..auth.models import Usuario
@@ -33,6 +34,18 @@ from .use_cases import (
     DeleteMotoUseCase,
     UpdateKilometrajeUseCase,
     GetMotoStatsUseCase
+)
+from .use_cases import (
+    CreateComponenteUseCase,
+    GetComponenteUseCase,
+    ListComponentesUseCase,
+    UpdateComponenteUseCase,
+    DeleteComponenteUseCase
+)
+from .schemas import (
+    MotoComponenteCreate,
+    MotoComponenteUpdate,
+    MotoComponenteRead
 )
 
 
@@ -160,6 +173,91 @@ async def get_moto_stats(
         message="Estadísticas obtenidas exitosamente",
         data=stats
     )
+
+
+# ----------------- MotoComponente endpoints -----------------
+
+
+@router.post(
+    "/{moto_id}/componentes",
+    response_model=ApiResponse[MotoComponenteRead],
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear componente para moto"
+)
+async def create_componente(
+    moto_id: int,
+    request: MotoComponenteCreate,
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
+    service: Annotated[MotoService, Depends(get_moto_service)]
+) -> ApiResponse[MotoComponenteRead]:
+    use_case = CreateComponenteUseCase(repository, service)
+    componente = await use_case.execute(moto_id, request)
+    return ApiResponse(success=True, message="Componente creado", data=componente)
+
+
+@router.get(
+    "/componentes/{componente_id}",
+    response_model=ApiResponse[MotoComponenteRead],
+    summary="Obtener componente por id"
+)
+async def get_componente(
+    componente_id: UUID,
+    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
+    service: Annotated[MotoService, Depends(get_moto_service)],
+    current_user: Annotated[Usuario, Depends(get_current_user)]
+) -> ApiResponse[MotoComponenteRead]:
+    use_case = GetComponenteUseCase(repository, service)
+    componente = await use_case.execute(componente_id)
+    return ApiResponse(success=True, data=componente)
+
+
+@router.get(
+    "/{moto_id}/componentes",
+    response_model=ApiResponse[list[MotoComponenteRead]],
+    summary="Listar componentes de una moto"
+)
+async def list_componentes(
+    moto_id: int,
+    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
+    service: Annotated[MotoService, Depends(get_moto_service)],
+    current_user: Annotated[Usuario, Depends(get_current_user)]
+) -> ApiResponse[list[MotoComponenteRead]]:
+    use_case = ListComponentesUseCase(repository, service)
+    componentes = await use_case.execute(moto_id)
+    return ApiResponse(success=True, data=componentes)
+
+
+@router.put(
+    "/componentes/{componente_id}",
+    response_model=ApiResponse[MotoComponenteRead],
+    summary="Actualizar componente"
+)
+async def update_componente(
+    componente_id: UUID,
+    request: MotoComponenteUpdate,
+    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
+    service: Annotated[MotoService, Depends(get_moto_service)],
+    current_user: Annotated[Usuario, Depends(get_current_user)]
+) -> ApiResponse[MotoComponenteRead]:
+    use_case = UpdateComponenteUseCase(repository, service)
+    componente = await use_case.execute(componente_id, request)
+    return ApiResponse(success=True, message="Componente actualizado", data=componente)
+
+
+@router.delete(
+    "/componentes/{componente_id}",
+    response_model=SuccessResponse[None],
+    summary="Eliminar componente"
+)
+async def delete_componente(
+    componente_id: UUID,
+    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
+    current_user: Annotated[Usuario, Depends(get_current_user)]
+) -> SuccessResponse[None]:
+    use_case = DeleteComponenteUseCase(repository)
+    await use_case.execute(componente_id)
+    return SuccessResponse(success=True, message="Componente eliminado")
 
 
 @router.get(

@@ -23,6 +23,15 @@ from .events import (
     emit_kilometraje_updated
 )
 
+from .repositories import MotoRepository
+from .services import MotoService
+from .schemas import (
+    MotoComponenteCreate,
+    MotoComponenteUpdate,
+    MotoComponenteRead
+)
+from uuid import UUID
+
 
 class RegisterMotoUseCase:
     """Caso de uso: Registrar una nueva moto."""
@@ -416,3 +425,64 @@ class GetMotoStatsUseCase:
         """
         stats = await self.repository.get_stats()
         return MotoStatsResponse(**stats)
+
+
+# ---------------- MotoComponente UseCases ----------------
+class CreateComponenteUseCase:
+    def __init__(self, repository: MotoRepository, service: MotoService):
+        self.repository = repository
+        self.service = service
+
+    async def execute(self, moto_id: int, data: MotoComponenteCreate) -> MotoComponenteRead:
+        componente_data = self.service.prepare_componente_data(data.model_dump(exclude_unset=True), moto_id)
+        componente = await self.repository.create_componente(componente_data)
+        return MotoComponenteRead.model_validate(self.service.build_componente_response(componente))
+
+
+class GetComponenteUseCase:
+    def __init__(self, repository: MotoRepository, service: MotoService):
+        self.repository = repository
+        self.service = service
+
+    async def execute(self, componente_id: UUID) -> MotoComponenteRead:
+        componente = await self.repository.get_componente_by_id(componente_id)
+        if not componente:
+            from src.shared.exceptions import NotFoundError
+            raise NotFoundError("Componente no encontrado")
+        return MotoComponenteRead.model_validate(self.service.build_componente_response(componente))
+
+
+class ListComponentesUseCase:
+    def __init__(self, repository: MotoRepository, service: MotoService):
+        self.repository = repository
+        self.service = service
+
+    async def execute(self, moto_id: int) -> list[ MotoComponenteRead ]:
+        componentes = await self.repository.list_componentes_by_moto(moto_id)
+        return [MotoComponenteRead.model_validate(self.service.build_componente_response(c)) for c in componentes]
+
+
+class UpdateComponenteUseCase:
+    def __init__(self, repository: MotoRepository, service: MotoService):
+        self.repository = repository
+        self.service = service
+
+    async def execute(self, componente_id: UUID, data: MotoComponenteUpdate) -> MotoComponenteRead:
+        componente = await self.repository.get_componente_by_id(componente_id)
+        if not componente:
+            from src.shared.exceptions import NotFoundError
+            raise NotFoundError("Componente no encontrado")
+        updated = await self.repository.update_componente(componente, data.model_dump(exclude_unset=True))
+        return MotoComponenteRead.model_validate(self.service.build_componente_response(updated))
+
+
+class DeleteComponenteUseCase:
+    def __init__(self, repository: MotoRepository):
+        self.repository = repository
+
+    async def execute(self, componente_id: UUID) -> None:
+        componente = await self.repository.get_componente_by_id(componente_id)
+        if not componente:
+            from src.shared.exceptions import NotFoundError
+            raise NotFoundError("Componente no encontrado")
+        await self.repository.delete_componente(componente)

@@ -6,7 +6,7 @@ from datetime import datetime
 import math
 
 from .schemas import MotoResponse, UsuarioBasicInfo
-from .models import Moto
+from .models import Moto, MotoComponente
 from ..auth.models import Usuario
 
 
@@ -132,8 +132,26 @@ class MotoService:
             moto_dict["usuario"] = {
                 "id": moto.usuario.id,
                 "nombre": moto.usuario.nombre,
-                "apellido": moto.usuario.apellido,
+                "apellido": getattr(moto.usuario, "apellido", None),
                 "email": moto.usuario.email
             }
         
         return moto_dict
+
+    # ---------------- Componente helpers ----------------
+    @staticmethod
+    def prepare_componente_data(componente_dict: dict, moto_id: int) -> dict:
+        componente_dict["moto_id"] = moto_id
+        return componente_dict
+
+    @staticmethod
+    def build_componente_response(componente: MotoComponente) -> dict:
+        return {
+            "id": componente.id,
+            "moto_id": componente.moto_id,
+            "tipo": componente.tipo,
+            "nombre": componente.nombre,
+            "component_state": componente.component_state.value if componente.component_state is not None else None,
+            "last_updated": componente.last_updated,
+            "extra_data": componente.extra_data,
+        }

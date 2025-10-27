@@ -194,4 +194,39 @@ class MotoStatsResponse(BaseModel):
     total_motos: int
     motos_por_año: dict[int, int]
     kilometraje_promedio: float
-    modelos_populares: list[dict[str, int]]  # [{"modelo": "Duke 390", "count": 5}]
+    class ModeloPopular(BaseModel):
+        modelo: str
+        count: int
+
+    modelos_populares: list[ModeloPopular]  # [{"modelo": "Duke 390", "count": 5}]
+
+
+# ==================== COMPONENTE SCHEMAS ====================
+from uuid import UUID
+from typing import Dict, Any
+
+
+class MotoComponenteCreate(BaseModel):
+    moto_id: int
+    tipo: str
+    nombre: Optional[str] = None
+    extra_data: Optional[Dict[str, Any]] = None
+
+
+class MotoComponenteUpdate(BaseModel):
+    tipo: Optional[str] = None
+    nombre: Optional[str] = None
+    extra_data: Optional[Dict[str, Any]] = None
+
+
+class MotoComponenteRead(BaseModel):
+    id: UUID
+    moto_id: int
+    tipo: str
+    nombre: Optional[str] = None
+    component_state: Optional[str] = None
+    last_updated: Optional[datetime] = None
+    extra_data: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
