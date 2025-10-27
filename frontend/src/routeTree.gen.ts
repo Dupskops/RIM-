@@ -14,6 +14,10 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteRouteImport } from './routes/app/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
+import { Route as AppNotificacionesRouteImport } from './routes/app/notificaciones'
+import { Route as AppHistorialRouteImport } from './routes/app/historial'
+import { Route as AppGarajeRouteImport } from './routes/app/garaje'
+import { Route as AppDiagnosticoRouteImport } from './routes/app/diagnostico'
 
 const RegisterRoute = RegisterRouteImport.update({
   id: '/register',
@@ -40,18 +44,46 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppNotificacionesRoute = AppNotificacionesRouteImport.update({
+  id: '/notificaciones',
+  path: '/notificaciones',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppHistorialRoute = AppHistorialRouteImport.update({
+  id: '/historial',
+  path: '/historial',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppGarajeRoute = AppGarajeRouteImport.update({
+  id: '/garaje',
+  path: '/garaje',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppDiagnosticoRoute = AppDiagnosticoRouteImport.update({
+  id: '/diagnostico',
+  path: '/diagnostico',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/app/diagnostico': typeof AppDiagnosticoRoute
+  '/app/garaje': typeof AppGarajeRoute
+  '/app/historial': typeof AppHistorialRoute
+  '/app/notificaciones': typeof AppNotificacionesRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/app/diagnostico': typeof AppDiagnosticoRoute
+  '/app/garaje': typeof AppGarajeRoute
+  '/app/historial': typeof AppHistorialRoute
+  '/app/notificaciones': typeof AppNotificacionesRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
@@ -60,14 +92,45 @@ export interface FileRoutesById {
   '/app': typeof AppRouteRouteWithChildren
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/app/diagnostico': typeof AppDiagnosticoRoute
+  '/app/garaje': typeof AppGarajeRoute
+  '/app/historial': typeof AppHistorialRoute
+  '/app/notificaciones': typeof AppNotificacionesRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/login' | '/register' | '/app/'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/login'
+    | '/register'
+    | '/app/diagnostico'
+    | '/app/garaje'
+    | '/app/historial'
+    | '/app/notificaciones'
+    | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/register' | '/app'
-  id: '__root__' | '/' | '/app' | '/login' | '/register' | '/app/'
+  to:
+    | '/'
+    | '/login'
+    | '/register'
+    | '/app/diagnostico'
+    | '/app/garaje'
+    | '/app/historial'
+    | '/app/notificaciones'
+    | '/app'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/login'
+    | '/register'
+    | '/app/diagnostico'
+    | '/app/garaje'
+    | '/app/historial'
+    | '/app/notificaciones'
+    | '/app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -114,14 +177,50 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/app/notificaciones': {
+      id: '/app/notificaciones'
+      path: '/notificaciones'
+      fullPath: '/app/notificaciones'
+      preLoaderRoute: typeof AppNotificacionesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/historial': {
+      id: '/app/historial'
+      path: '/historial'
+      fullPath: '/app/historial'
+      preLoaderRoute: typeof AppHistorialRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/garaje': {
+      id: '/app/garaje'
+      path: '/garaje'
+      fullPath: '/app/garaje'
+      preLoaderRoute: typeof AppGarajeRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/diagnostico': {
+      id: '/app/diagnostico'
+      path: '/diagnostico'
+      fullPath: '/app/diagnostico'
+      preLoaderRoute: typeof AppDiagnosticoRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
 interface AppRouteRouteChildren {
+  AppDiagnosticoRoute: typeof AppDiagnosticoRoute
+  AppGarajeRoute: typeof AppGarajeRoute
+  AppHistorialRoute: typeof AppHistorialRoute
+  AppNotificacionesRoute: typeof AppNotificacionesRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
+  AppDiagnosticoRoute: AppDiagnosticoRoute,
+  AppGarajeRoute: AppGarajeRoute,
+  AppHistorialRoute: AppHistorialRoute,
+  AppNotificacionesRoute: AppNotificacionesRoute,
   AppIndexRoute: AppIndexRoute,
 }
 

@@ -7,9 +7,33 @@ import {
   MapPin,
   Calendar,
   Clock,
+  RotateCw,
+  ZoomIn,
 } from "lucide-react";
-
+import { useMotos } from '@/hooks/useMotos';
+import { useMotoStore } from '@/store';
+import { useState } from 'react';
+import FormularioNewMoto from "@/components/formulario";
 const HomePage: React.FC = () => {
+  const motosQuery = useMotos();
+  const motos = useMotoStore((s) => s.motos);
+
+  const hasMoto = Array.isArray(motos) && motos.length > 0;
+  // botones del visor 3D (placeholders — conectar con API del visor si existe)
+  const handleRotate = () => {
+    // Si tienes un controlador 3D, llama aquí: e.g. modelViewer.rotate(90)
+    // por ahora solo log
+    // eslint-disable-next-line no-console
+    console.log('3D: rotate requested');
+  };
+
+  const handleZoomIn = () => {
+    // eslint-disable-next-line no-console
+    console.log('3D: zoom in requested');
+  };
+  // Modal state (el formulario maneja su propio estado interno)
+  const [showForm, setShowForm] = useState(false);
+
   return (
     <div className="min-h-screen pb-20 bg-[var(--bg)]">
 
@@ -29,45 +53,91 @@ const HomePage: React.FC = () => {
                 {/* badges placeholder */}
               </div>
 
+            {/* Modelo 3D */}
               <div className="flex items-center justify-center p-2 relative">
-                <div className="h-80 w-full max-w-3xl rounded-lg overflow-hidden shadow-2xl">
-                  <div
-                    className="w-full"
-                    role="img"
-                    aria-label="Modelo 3D de la moto"
-                    style={{
-                      height: "clamp(310px,42vw,420px)",
-                      background:
-                        "linear-gradient(180deg, rgba(2,6,8,0.8), rgba(0,0,0,0.65))",
-                    }}
-                  />
+                <div className="h-80 w-full max-w-3xl rounded-lg overflow-hidden shadow-2xl flex items-center justify-center bg-[rgba(255,255,255,0.02)] relative">
+                  {/* Loading state */}
+                  {motosQuery.isLoading ? (
+                    <div className="w-full h-full animate-pulse" />
+                  ) : hasMoto ? (
+                    // Mostrar modelo 3D (placeholder actual, aquí iría el canvas/visor 3D)
+                    <div
+                      className="w-full"
+                      role="img"
+                      aria-label="Modelo 3D de la moto"
+                      style={{
+                        height: 'clamp(310px,42vw,420px)',
+                        background:
+                          'linear-gradient(180deg, rgba(2,6,8,0.8), rgba(0,0,0,0.65))',
+                      }}
+                    />
+                  ) : (
+                    // No tiene moto: mostrar botón para agregar
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+                      <div className="text-[var(--color-2)]">No tienes una moto registrada</div>
+                      <button
+                        onClick={() => setShowForm(true)}
+                        className="px-5 py-2 rounded-md font-bold bg-[var(--accent)] text-[var(--bg)] shadow-md"
+                        aria-label="Agregar moto"
+                      >
+                        Agregar moto
+                      </button>
+                    </div>
+                  )}
+                  {/* Overlay buttons (rotate / zoom) — sólo cuando hay moto */}
+                  {hasMoto && (
+                    <div className="absolute right-4 bottom-4 flex gap-3">
+                      <button
+                        onClick={handleRotate}
+                        aria-label="rotar-modelo"
+                        title="Rotar modelo"
+                        className="w-10 h-10 rounded-full bg-[rgba(0,0,0,0.6)] border border-white/10 flex items-center justify-center text-white hover:scale-105 transition-transform shadow-md"
+                      >
+                        <RotateCw size={18} />
+                      </button>
+
+                      <button
+                        onClick={handleZoomIn}
+                        aria-label="acercar-modelo"
+                        title="Acercar modelo"
+                        className="w-10 h-10 rounded-full bg-[rgba(0,0,0,0.6)] border border-white/10 flex items-center justify-center text-white hover:scale-105 transition-transform shadow-md"
+                      >
+                        <ZoomIn size={18} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                <div className="absolute left-4 top-4 flex flex-col gap-2">
-                  <span
-                    className="px-2 py-1 rounded-full font-semibold text-[var(--accent)]"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, rgba(254,119,67,0.12), rgba(254,119,67,0.06))",
-                      border: "1px solid rgba(254,119,67,0.12)",
-                    }}
-                  >
-                    Encendido
-                  </span>
-                  <span
-                    className="px-2 py-1 rounded-full font-semibold text-[var(--accent-2)]"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, rgba(68,125,155,0.08), rgba(68,125,155,0.04))",
-                      border: "1px solid rgba(68,125,155,0.06)",
-                    }}
-                  >
-                    En línea
-                  </span>
-                </div>
+                {/* Badges: sólo mostrar si hay una moto */}
+                {hasMoto && (
+                  <div className="absolute left-4 top-4 flex flex-col gap-2">
+                    <span
+                      className="px-2 py-1 rounded-full font-semibold text-[var(--accent)]"
+                      style={{
+                        background:
+                          'linear-gradient(90deg, rgba(254,119,67,0.12), rgba(254,119,67,0.06))',
+                        border: '1px solid rgba(254,119,67,0.12)',
+                      }}
+                    >
+                      Encendido
+                    </span>
+                    <span
+                      className="px-2 py-1 rounded-full font-semibold text-[var(--accent-2)]"
+                      style={{
+                        background:
+                          'linear-gradient(90deg, rgba(68,125,155,0.08), rgba(68,125,155,0.04))',
+                        border: '1px solid rgba(68,125,155,0.06)',
+                      }}
+                    >
+                      En línea
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </section>
+
+          <FormularioNewMoto showForm={showForm} onClose={() => setShowForm(false)} />
 
           <section
             className="rounded-lg p-6"
