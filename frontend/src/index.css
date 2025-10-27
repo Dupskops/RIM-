@@ -11,6 +11,8 @@
   --bg2: #b54b00;
   --glass: rgba(215,215,215,0.04);
   --accent-shadow: 0 18px 40px rgba(254,119,67,0.14);
+  --shadow2: rgba(255, 72, 0, 0.435);
+  --shadow3: transparent;
 }
 
 @layer base {
@@ -107,10 +109,7 @@
     /* Cards */
     .card {
         background: var(--card);
-        padding: calc(var(--sp-sm));
         border-radius: 12px;
-        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.38);
-        border: 1px solid rgba(255, 255, 255, 0.02);
     }
     .last-ride {
         display: block;
@@ -333,7 +332,6 @@
     @media (max-width: 899px) {
         .content {
             max-width: 440px;
-            margin: 6px auto 90px;
             padding: 0 10px;
         }
         .card-thumb {
@@ -400,7 +398,6 @@
             align-items: start;
             padding: 10px 20px 60px;
             max-width: var(--max-width);
-            margin: 18px auto 60px;
         }
         .col-main {
             display: flex;
@@ -479,10 +476,5 @@
         box-shadow: 0 8px 18px rgba(0,0,0,0.22);
         opacity: 0.98;
         z-index: 1;
-    }
-    .nav-button:focus {
-        outline: none;
-        box-shadow: 0 0 0 6px rgba(181,75,0,0.12);
-        border-radius: 8px;
     }
 }
