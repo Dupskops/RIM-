@@ -78,6 +78,7 @@ class RegisterUserUseCase:
                 email=data.email,
                 password_hash=password_hash,
                 nombre=data.nombre,
+                apellido=data.apellido,
                 telefono=data.telefono,
                 email_verificado=False,
                 activo=True,

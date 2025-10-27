@@ -4,7 +4,7 @@ Define la validación y serialización de datos para auth.
 """
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
-from datetime import datetime, date
+from datetime import datetime
 
 from .validators import validate_password_strength, validate_phone_number
 from ..shared.base_models import FilterParams
@@ -28,7 +28,13 @@ class RegisterRequest(BaseModel):
         ...,
         min_length=2,
         max_length=255,
-        description="Nombre completo"
+        description="Nombre"
+    )
+    apellido: str = Field(
+        ...,
+        min_length=2,
+        max_length=255,
+        description="Apellido"
     )
     telefono: Optional[str] = Field(
         None,
@@ -64,6 +70,7 @@ class RegisterRequest(BaseModel):
                 "email": "usuario@ejemplo.com",
                 "password": "MiPassword123",
                 "nombre": "Juan Pérez",
+                "apellido": "Gómez",
                 "telefono": "+573001234567"
             }
         }
@@ -247,6 +254,7 @@ class UserResponse(BaseModel):
     id: str = Field(..., description="ID del usuario")
     email: str = Field(..., description="Email del usuario")
     nombre: str = Field(..., description="Nombre completo")
+    apellido: str = Field(..., description="Apellido")
     telefono: Optional[str] = Field(None, description="Teléfono")
     email_verificado: bool = Field(..., description="Email verificado")
     activo: bool = Field(..., description="Cuenta activa")
@@ -268,10 +276,11 @@ class UserResponse(BaseModel):
                 "id": "123e4567-e89b-12d3-a456-426614174000",
                 "email": "usuario@ejemplo.com",
                 "nombre": "Juan Pérez",
+                "apellido": "Gómez",
                 "telefono": "+573001234567",
                 "email_verificado": True,
                 "activo": True,
-                "es_admin": False,
+                "rol": "user",
                 "ultimo_login": "2025-10-07T10:30:00",
                 "created_at": "2025-10-01T08:00:00",
                 "updated_at": "2025-10-07T10:30:00"

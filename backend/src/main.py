@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 from datetime import datetime, timezone
-from fastapi import WebSocket
-from .notificaciones.websocket import notificacion_websocket_endpoint
+from typing import Dict, Any
+
 from .config.settings import settings
 from .config.database import init_db, close_db, check_db_connection
 from .shared.event_bus import event_bus

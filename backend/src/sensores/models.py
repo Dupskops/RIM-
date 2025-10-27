@@ -1,225 +1,240 @@
 """
-Modelos de base de datos para sensores IoT.
+Modelos de dominio para el módulo de sensores.
+
+Jerarquía:
+- SensorTemplate: Plantillas de sensores por modelo de moto
+- Sensor: Instancias de sensores con estado de salud (sensor_state)
+- Lectura: Telemetría raw de sensores
+
+Nota: MotoComponente está en motos/models.py
+
+Estados:
+- sensor_state: ok, degraded, faulty, offline, unknown (salud del sensor)
+- component_state: ok, warning, moderate, critical, unknown (en motos/models.py)
+
+PKs: UUID para tablas de sensores
+FKs: int para referencias a otros módulos (motos, etc.)
 """
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import String, Integer, Float, DateTime, Text, Boolean, ForeignKey, Enum as SQLEnum
+from typing import Optional, Dict, Any
+from uuid import UUID, uuid4
+from sqlalchemy import String, TIMESTAMP, Integer, text, Enum as SQLEnum, ForeignKey, BigInteger
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from enum import Enum
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
+import enum
 
-from ..shared.models import BaseModel
-from ..shared.constants import TipoSensor
-
-
-class EstadoSensor(str, Enum):
-    """Estados de un sensor."""
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    ERROR = "error"
-    MAINTENANCE = "maintenance"
+from ..shared.models import Base
 
 
-class Sensor(BaseModel):
-    """Modelo de sensor IoT instalado en una moto."""
+# ============================================
+# ENUMS
+# ============================================
+
+class SensorState(str, enum.Enum):
+    """Estado de salud del sensor (hardware/conectividad)."""
+    OK = "ok"
+    DEGRADED = "degraded"  # Intermitente, con errores
+    FAULTY = "faulty"       # Mal funcionamiento confirmado
+    OFFLINE = "offline"     # Sin conexión
+    UNKNOWN = "unknown"     # Estado indeterminado
+
+
+# ============================================
+# MODELS
+# ============================================
+
+class SensorTemplate(Base):
+    """
+    Plantilla de sensores por modelo de moto.
     
+    Define qué sensores deben aprovisionarse automáticamente
+    al registrar una moto de un modelo específico.
+    
+    Ejemplo definition JSONB:
+    {
+        "sensor_type": "temperature",
+        "unit": "celsius",
+        "default_thresholds": {"min": 0, "max": 100},
+        "frequency_ms": 1000,
+        "component_type": "engine"
+    }
+    """
+    __tablename__ = "sensor_templates"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    modelo: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    definition: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+        onupdate=text("now()")
+    )
+
+    def __repr__(self):
+        return f"<SensorTemplate(id={self.id}, modelo='{self.modelo}', name='{self.name}')>"
+
+
+class Sensor(Base):
+    """
+    Sensor instanciado en una moto.
+    
+    Cada sensor monitorea un aspecto específico y puede estar asociado
+    a un componente físico. El sensor_state refleja la salud del sensor mismo.
+    
+    Ejemplo config JSONB:
+    {
+        "thresholds": {"min": 10, "max": 90},
+        "calibration_offset": 0.5,
+        "enabled": true
+    }
+    
+    Ejemplo last_value JSONB:
+    {
+        "value": 75.3,
+        "unit": "celsius",
+        "quality": 0.98
+    }
+    """
     __tablename__ = "sensores"
-    
-    # Relación con moto
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     moto_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("motos.id"),
+        ForeignKey("motos.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
-        comment="ID de la moto"
+        index=True
+    )
+    template_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sensor_templates.id"),
+        nullable=True
+    )
+    nombre: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    tipo: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    componente_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("moto_componentes.id"),
+        nullable=True,
+        index=True
     )
     
-    # Tipo de sensor
-    tipo: Mapped[str] = mapped_column(
-        SQLEnum(TipoSensor, native_enum=False),
+    config: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB,
         nullable=False,
-        index=True,
-        comment="Tipo de sensor"
+        server_default=text("'{}'::jsonb")
     )
-    
-    # Identificación
-    codigo: Mapped[str] = mapped_column(
-        String(50),
-        unique=True,
+    sensor_state: Mapped[SensorState] = mapped_column(
+        SQLEnum(SensorState, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
-        index=True,
-        comment="Código único del sensor"
+        server_default=SensorState.UNKNOWN.value
     )
+    last_value: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    last_seen: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     
-    nombre: Mapped[Optional[str]] = mapped_column(
-        String(100),
-        nullable=True,
-        comment="Nombre descriptivo del sensor"
-    )
-    
-    # Ubicación física
-    ubicacion: Mapped[Optional[str]] = mapped_column(
-        String(100),
-        nullable=True,
-        comment="Ubicación física en la moto"
-    )
-    
-    # Estado
-    estado: Mapped[str] = mapped_column(
-        SQLEnum(EstadoSensor, native_enum=False),
-        default=EstadoSensor.ACTIVE,
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
         nullable=False,
-        index=True,
-        comment="Estado del sensor"
+        server_default=text("now()")
     )
-    
-    # Configuración
-    frecuencia_lectura: Mapped[int] = mapped_column(
-        Integer,
-        default=5,
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
         nullable=False,
-        comment="Frecuencia de lectura en segundos"
+        server_default=text("now()"),
+        onupdate=text("now()")
     )
-    
-    umbral_min: Mapped[Optional[float]] = mapped_column(
-        Float,
-        nullable=True,
-        comment="Umbral mínimo para alertas"
-    )
-    
-    umbral_max: Mapped[Optional[float]] = mapped_column(
-        Float,
-        nullable=True,
-        comment="Umbral máximo para alertas"
-    )
-    
-    # Metadata del dispositivo
-    fabricante: Mapped[Optional[str]] = mapped_column(
-        String(100),
-        nullable=True,
-        comment="Fabricante del sensor"
-    )
-    
-    modelo: Mapped[Optional[str]] = mapped_column(
-        String(100),
-        nullable=True,
-        comment="Modelo del sensor"
-    )
-    
-    version_firmware: Mapped[Optional[str]] = mapped_column(
-        String(50),
-        nullable=True,
-        comment="Versión del firmware"
-    )
-    
-    # Timestamps adicionales
-    ultima_lectura: Mapped[Optional[datetime]] = mapped_column(
-        DateTime,
-        nullable=True,
-        comment="Timestamp de la última lectura"
-    )
-    
-    ultima_calibracion: Mapped[Optional[datetime]] = mapped_column(
-        DateTime,
-        nullable=True,
-        comment="Timestamp de la última calibración"
-    )
-    
-    # Notas
-    notas: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Notas adicionales"
-    )
-    
+
     # Relaciones
-    moto = relationship("Moto", back_populates="sensores")
-    lecturas = relationship("LecturaSensor", back_populates="sensor", cascade="all, delete-orphan")
-    fallas = relationship("Falla", back_populates="sensor")
-    
-    def __repr__(self) -> str:
-        return f"<Sensor {self.codigo} - {self.tipo}>"
-    
+    moto: Mapped["Moto"] = relationship("Moto", back_populates="sensores")
+    template: Mapped[Optional["SensorTemplate"]] = relationship("SensorTemplate")
+    componente: Mapped[Optional["MotoComponente"]] = relationship("MotoComponente", back_populates="sensores")
+    lecturas: Mapped[list["Lectura"]] = relationship("Lectura", back_populates="sensor", cascade="all, delete-orphan")
+    # Relación con fallas detectadas por este sensor (si aplica)
+    fallas: Mapped[list["Falla"]] = relationship(
+        "Falla", back_populates="sensor", cascade="all, delete-orphan"
+    )
+
     @property
-    def is_active(self) -> bool:
-        """Verifica si el sensor está activo."""
-        return self.estado == EstadoSensor.ACTIVE
-    
+    def is_healthy(self) -> bool:
+        """Sensor en estado saludable."""
+        return self.sensor_state == SensorState.OK
+
     @property
-    def needs_maintenance(self) -> bool:
-        """Verifica si el sensor necesita mantenimiento."""
-        return self.estado == EstadoSensor.MAINTENANCE
-    
-    @property
-    def has_error(self) -> bool:
-        """Verifica si el sensor tiene error."""
-        return self.estado == EstadoSensor.ERROR
+    def needs_attention(self) -> bool:
+        """Sensor requiere atención."""
+        return self.sensor_state in [SensorState.DEGRADED, SensorState.FAULTY, SensorState.OFFLINE]
+
+    def __repr__(self):
+        return f"<Sensor(id={self.id}, tipo='{self.tipo}', state={self.sensor_state.value})>"
 
 
-class LecturaSensor(BaseModel):
-    """Modelo de lectura de sensor."""
+class Lectura(Base):
+    """
+    Lectura de telemetría de un sensor.
     
-    __tablename__ = "lecturas_sensores"
+    Esquema simple para MVP. En producción considerar TimescaleDB/particionado.
     
-    # Relación con sensor
-    sensor_id: Mapped[int] = mapped_column(
+    Ejemplo valor JSONB:
+    {
+        "value": 75.3,
+        "unit": "celsius",
+        "raw": 753
+    }
+    
+    Ejemplo metadata JSONB:
+    {
+        "quality": 0.98,
+        "anomaly_score": 0.05,
+        "source": "websocket"
+    }
+    """
+    __tablename__ = "lecturas"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    moto_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("sensores.id"),
+        ForeignKey("motos.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
-        comment="ID del sensor"
+        index=True
     )
-    
-    # Valor medido
-    valor: Mapped[float] = mapped_column(
-        Float,
+    sensor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sensores.id", ondelete="CASCADE"),
         nullable=False,
-        comment="Valor de la lectura"
+        index=True
+    )
+    component_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("moto_componentes.id"),
+        nullable=True
     )
     
-    # Unidad de medida
-    unidad: Mapped[str] = mapped_column(
-        String(20),
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
         nullable=False,
-        comment="Unidad de medida"
+        index=True
     )
+    valor: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    extra_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)  # Renombrado de metadata
     
-    # Timestamp de la lectura (del dispositivo IoT)
-    timestamp_lectura: Mapped[datetime] = mapped_column(
-        DateTime,
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
         nullable=False,
-        index=True,
-        comment="Timestamp de la lectura del dispositivo"
+        server_default=text("now()")
     )
-    
-    # Indicadores de calidad
-    fuera_rango: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        nullable=False,
-        comment="Si el valor está fuera del rango normal"
-    )
-    
-    alerta_generada: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        nullable=False,
-        comment="Si se generó una alerta"
-    )
-    
-    # Metadata adicional (JSON)
-    metadata_json: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Metadata adicional en formato JSON"
-    )
-    
+
     # Relaciones
-    sensor = relationship("Sensor", back_populates="lecturas")
-    
-    def __repr__(self) -> str:
-        return f"<LecturaSensor {self.sensor_id}: {self.valor} {self.unidad}>"
-    
-    @property
-    def is_anomaly(self) -> bool:
-        """Verifica si la lectura es una anomalía."""
-        return self.fuera_rango or self.alerta_generada
+    moto: Mapped["Moto"] = relationship("Moto")
+    sensor: Mapped["Sensor"] = relationship("Sensor", back_populates="lecturas")
+    componente: Mapped[Optional["MotoComponente"]] = relationship("MotoComponente")
+
+    def __repr__(self):
+        val = self.valor.get("value", "?") if self.valor else "?"
+        return f"<Lectura(id={self.id}, sensor_id={self.sensor_id}, valor={val}, ts={self.ts})>"

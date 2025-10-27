@@ -9,6 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from .models import Moto
 from ..auth.models import Usuario
+from .models import MotoComponente
+from uuid import UUID
 
 
 class MotoRepository:
@@ -381,3 +383,34 @@ class MotoRepository:
             "kilometraje_promedio": float(kilometraje_promedio),
             "modelos_populares": modelos_populares
         }
+
+    # ------------------ MotoComponente CRUD ------------------
+    async def create_componente(self, componente_data: dict) -> MotoComponente:
+        componente = MotoComponente(**componente_data)
+        self.session.add(componente)
+        await self.session.commit()
+        await self.session.refresh(componente)
+        return componente
+
+    async def get_componente_by_id(self, componente_id: UUID) -> Optional[MotoComponente]:
+        query = select(MotoComponente).where(MotoComponente.id == componente_id)
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def list_componentes_by_moto(self, moto_id: int) -> Sequence[MotoComponente]:
+        query = select(MotoComponente).where(MotoComponente.moto_id == moto_id)
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def update_componente(self, componente: MotoComponente, update_data: dict) -> MotoComponente:
+        for key, value in update_data.items():
+            if hasattr(componente, key):
+                setattr(componente, key, value)
+        componente.last_updated = datetime.utcnow()
+        await self.session.commit()
+        await self.session.refresh(componente)
+        return componente
+
+    async def delete_componente(self, componente: MotoComponente) -> None:
+        await self.session.delete(componente)
+        await self.session.commit()

@@ -2,13 +2,15 @@
 Modelos de base de datos para el módulo de fallas.
 Representa fallas detectadas en las motos y su tracking.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..shared.models import BaseModel
 from ..shared.constants import TipoFalla, SeveridadFalla, EstadoFalla
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from uuid import UUID
 
 
 class Falla(BaseModel):
@@ -25,9 +27,9 @@ class Falla(BaseModel):
     
     # Relaciones
     moto_id: Mapped[int] = mapped_column(Integer, ForeignKey("motos.id"), nullable=False)
-    sensor_id: Mapped[Optional[int]] = mapped_column(
-        Integer, 
-        ForeignKey("sensores.id"), 
+    sensor_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sensores.id"),
         nullable=True,
         comment="Sensor que detectó la falla (si aplica)"
     )
@@ -46,8 +48,8 @@ class Falla(BaseModel):
         nullable=False,
         comment="Código único de la falla (ej: FL-20250107-001)"
     )
-    
-    tipo: Mapped[str] = mapped_column(
+
+    tipo: Mapped[TipoFalla] = mapped_column(
         String(50),
         nullable=False,
         comment="Tipo de falla (sobrecalentamiento, bateria_baja, etc.)"
@@ -149,7 +151,7 @@ class Falla(BaseModel):
     fecha_deteccion: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
+        default=datetime.now(timezone.utc),
         comment="Cuándo se detectó la falla"
     )
     
@@ -209,7 +211,7 @@ class Falla(BaseModel):
         """Calcula días desde la detección sin resolver."""
         if self.esta_resuelta:
             return 0
-        delta = datetime.utcnow() - self.fecha_deteccion
+        delta = datetime.now(timezone.utc) - self.fecha_deteccion
         return delta.days
     
     @property
