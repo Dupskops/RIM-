@@ -45,7 +45,8 @@ from src.notificaciones.use_cases import (
     ActualizarPreferenciasUseCase
 )
 from src.shared.event_bus import get_event_bus
-
+#Import del connection_manager
+from src.shared.websocket import (connection_manager) 
 
 router = APIRouter()
 
@@ -92,7 +93,25 @@ async def crear_notificacion(
         referencia_id=data.referencia_id,
         expira_en=data.expira_en
     )
-    
+    #Para que llegue la notificacion
+    try:
+        await connection_manager.broadcast_json({
+            "type":"nueva_notificacion",
+            "data":{
+                "id":notificacion.id,
+                "usuario_id": notificacion.usuario_id,
+                "titulo": notificacion.titulo,
+                "mensaje": notificacion.mensaje,
+                "tipo": notificacion.tipo,
+                "canal": notificacion.canal
+
+            }
+
+        })
+    except Exception as e:
+        print(f"⚠️ Error al enviar notificación por WebSocket: {e}")
+        
+
     return ApiResponse(
         success=True,
         message="Notificación creada exitosamente",

@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 from datetime import datetime, timezone
-
+from fastapi import WebSocket
+from .notificaciones.websocket import notificacion_websocket_endpoint
 from .config.settings import settings
 from .config.database import init_db, close_db, check_db_connection
 from .shared.event_bus import event_bus
@@ -233,6 +234,15 @@ app.include_router(ml_router, prefix=f"{settings.API_PREFIX}/ml", tags=["Machine
 app.include_router(chatbot_router, prefix=f"{settings.API_PREFIX}/chatbot", tags=["Chatbot IA"])
 app.include_router(notificaciones_router, prefix=f"{settings.API_PREFIX}/notificaciones", tags=["Notificaciones"])
 
+# ============================================
+# ENDPOINT WEBSOCKET (Notificaciones en tiempo real)
+# ============================================
+
+
+@app.websocket("/ws/notifications")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket para notificaciones en tiempo real"""
+    await notificacion_websocket_endpoint(websocket)
 
 # ============================================
 # ENDPOINTS DE SALUD
