@@ -155,6 +155,18 @@ class ConnectionManager:
             for ws in disconnected:
                 await self.disconnect(ws)
     
+    #Broadcast_json este metodo es para que llegue la notificacion 
+    async def broadcast_json(self, data: dict):
+        """Envia un JSON a usuarios conectados"""
+        for user_id, connections in self.active_connections.items():
+            for websocket in connections:
+                try:
+                    await websocket.send_json(data)
+                except Exception as e:
+                    logger.error(f"⚠️ Error enviando mensaje a usuario {user_id}: {e}")
+                    await self.disconnect(websocket)
+     
+
     async def join_room(self, user_id: str, room_id: str):
         """
         Añade un usuario a una sala.
