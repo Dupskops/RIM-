@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { BellDot, Bot, User } from "lucide-react";
 import Navbar from "./navbar";
+import { useAuthStore } from "@/store";
 
 export default function Layout() {
   const location = useLocation();
@@ -10,28 +11,30 @@ export default function Layout() {
   return (
     <div>
       <header className="flex items-center justify-between p-3">
-        <h1
+        <button
+          onClick={() => navigate({ to: '/app' })}
           className="text-2xl font-extrabold"
           style={{ color: "var(--accent)" }}
         >
           KTM
-        </h1>
+        </button>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate({ to: '/app/notificaciones' })}
-            className="cursor-pointer p-2 rounded-lg text-[var(--muted)]"
+            className="p-2 rounded-lg text-[var(--muted)] hover:text-[var(--accent)]"
             aria-label="Notificaciones"
           >
             <BellDot />
           </button>
-
+          
           <button
-            className="cursor-pointer p-2 rounded-lg text-[var(--muted)]"
+            className="cursor-pointer pl-1 rounded-lg text-[var(--muted)] hover:text-[var(--accent)]"
             aria-label="Perfil"
           >
             <User />
           </button>
+          <h5 className="text-[var(--card)]">{useAuthStore((s) => s.user?.nombre)}</h5>
         </div>
       </header>
       <Outlet />

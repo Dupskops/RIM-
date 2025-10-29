@@ -120,6 +120,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",  # React dev
         "http://localhost:5173",  # Vite dev
+        "http://localhost:4173",  # Vite build
         "http://localhost:8080",  # Producción local
     ]
     

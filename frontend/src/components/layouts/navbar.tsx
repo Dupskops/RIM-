@@ -1,9 +1,10 @@
 import { BarChart2, Clock, Home } from "lucide-react";
-import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useNavStore } from "@/store";
 
 export default function Navbar() {
-    const [activeIndex, setActiveIndex] = useState<number>(0);
+    const activeIndex = useNavStore((s) => s.activeIndex);
+    const setActiveIndex = useNavStore((s) => s.setActiveIndex);
     const navigate = useNavigate();
     return (
         <nav

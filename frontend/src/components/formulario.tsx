@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import apiClient from '@/config/api-client';
 import { API_ENDPOINTS } from '@/config/api-endpoints';
 import { useMotoStore } from '@/store';
@@ -20,6 +21,7 @@ type Props = {
 
 const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
     const addMoto = useMotoStore((s) => s.addMoto);
+    const navigate = useNavigate();
 
     const [vin, setVin] = useState('');
     const [modelo, setModelo] = useState('');
@@ -81,6 +83,8 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
             setShowSuccess(true);
             resetForm();
             onClose();
+            // Redirigir al Garaje después del registro
+            navigate({ to: '/app/garaje' });
         } catch (err) {
             let msg = 'Error al registrar moto';
             if (err instanceof Error) msg = err.message;

@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { ArrowLeft, Check } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 
 type NotificationType = 'mantenimiento' | 'diagnostico' | 'otro';
@@ -61,6 +61,14 @@ const NotificacionesPage: React.FC = () => {
     const [filter, setFilter] = useState<'todas' | NotificationType>('todas');
     const navigate = useNavigate();
     const [items, setItems] = useState<NotificationItem[]>(sampleNotifications);
+    const [loading, setLoading] = useState<boolean>(false);
+
+    useEffect(() => {
+        // Simular carga de notificaciones (reemplaza por fetch real si corresponde)
+        setLoading(true);
+        const t = setTimeout(() => setLoading(false), 600);
+        return () => clearTimeout(t);
+    }, []);
 
     const filtered = useMemo(() => {
         if (filter === 'todas') return items;
@@ -75,12 +83,18 @@ const NotificacionesPage: React.FC = () => {
         setItems((prev) => prev.filter((it) => !it.read));
     };
 
+    const markAllRead = () => {
+        setItems((prev) => prev.map((it) => ({ ...it, read: true })));
+    };
+
+    const unreadCount = items.filter((it) => !it.read).length;
+
         return (
             <div className="p-6 max-w-5xl mx-auto">
                 <header className="mb-6 flex items-center gap-3">
                     <button
                         onClick={() => navigate({ to: '/app' })}
-                        className="p-2 rounded-md text-[var(--muted)] hover:bg-gray-100"
+                        className="p-2 rounded-md text-[var(--accent)] hover:bg-gray-100"
                         aria-label="Volver al inicio"
                     >
                         <ArrowLeft />
@@ -101,7 +115,7 @@ const NotificacionesPage: React.FC = () => {
                                             key={f.key}
                                             onClick={() => setFilter(f.key)}
                                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors focus:outline-none ${
-                                    active ? 'bg-[var(--accent)] text-white' : 'text-[var(--text)] hover:bg-gray-100'
+                                    active ? 'bg-[var(--accent)] text-white' : 'text-[var(--bg)]'
                                 }`}
                                 aria-pressed={active}
                             >
@@ -113,6 +127,17 @@ const NotificacionesPage: React.FC = () => {
 
                 <div className="flex items-center gap-3">
                     <button
+                        onClick={markAllRead}
+                        disabled={unreadCount === 0}
+                        aria-disabled={unreadCount === 0}
+                        className={`text-sm px-3 py-1 rounded-md shadow-sm flex items-center gap-2 bg-[var(--accent)] text-white hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed`}
+                        title="Marcar todas como leídas"
+                    >
+                        <Check className="h-4 w-4" />
+                        Marcar todo como leído
+                    </button>
+
+                    <button
                         onClick={clearRead}
                         className="text-sm text-gray-600 hover:text-[var(--accent)]"
                         title="Eliminar leídas"
@@ -123,42 +148,65 @@ const NotificacionesPage: React.FC = () => {
             </section>
 
             <main>
-                {filtered.length === 0 ? (
+                {loading ? (
+                    // Skeleton while loading
+                    <ul className="space-y-3">
+                        {Array.from({ length: 3 }).map((_, i) => (
+                            <li key={i} className="flex items-start gap-4 p-4 rounded-lg shadow-sm bg-[var(--card)]">
+                                <div className="w-10 h-10 rounded-full bg-gray-500/20 animate-pulse" />
+                                <div className="flex-1">
+                                    <div className="h-4 bg-gray-500/20 rounded w-1/3 mb-2 animate-pulse" />
+                                    <div className="h-3 bg-gray-500/20 rounded w-1/4 mb-3 animate-pulse" />
+                                    <div className="h-3 bg-gray-500/20 rounded w-full animate-pulse" />
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                ) : items.length === 0 ? (
+                    <div className="text-center py-12 text-gray-500">No tienes notificaciones nuevas.</div>
+                ) : filtered.length === 0 ? (
                     <div className="text-center py-12 text-gray-500">No hay notificaciones en esta categoría.</div>
                 ) : (
                     <ul className="space-y-3">
                         {filtered.map((n) => (
                             <li
                                 key={n.id}
-                                className={`flex items-start gap-4 p-4 rounded-lg shadow-sm bg-[var(--card)] '
-                                }`}
+                                className={`flex items-start gap-4 p-4 rounded-lg shadow-sm ${n.read ? 'opacity-75' : 'opacity-100'} bg-[var(--card)]`}
                             >
                                 <div className="flex-shrink-0">
                                     <div
-                                        className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ${badgeColor(n.type)}`}
+                                        className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ${badgeColor(n.type)} ${n.read ? 'filter grayscale contrast-90' : ''}`}
                                         aria-hidden
                                     >
-                                        {n.type === 'mantenimiento' ? 'M' : n.type === 'diagnostico' ? 'D' : '•'}
+                                        {n.read ? (
+                                            <Check className="h-4 w-4 text-current" />
+                                        ) : n.type === 'mantenimiento' ? (
+                                            'M'
+                                        ) : n.type === 'diagnostico' ? (
+                                            'D'
+                                        ) : (
+                                            '•'
+                                        )}
                                     </div>
                                 </div>
 
                                 <div className="flex-1">
                                     <div className="flex items-center justify-between gap-4">
                                         <div>
-                                            <h3 className="text-sm font-medium text-[var(--bg)]">{n.title}</h3>
-                                            <p className="text-xs text-gray-500">{new Date(n.date).toLocaleString()}</p>
+                                            <h3 className={`text-sm font-medium ${n.read ? 'text-gray-400' : 'text-[var(--bg)]'}`}>{n.title}</h3>
+                                            <p className={`${n.read ? 'text-gray-400' : 'text-xs text-[var(--accent-2)]'}`}>{new Date(n.date).toLocaleString()}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <button
                                                 onClick={() => toggleRead(n.id)}
-                                                className="text-xs text-gray-600 hover:text-[var(--accent)]"
+                                                className="text-xs text-[var(--accent)] hover:text-[var(--color-2)]"
                                             >
                                                 {n.read ? 'Marcar como no leída' : 'Marcar como leída'}
                                             </button>
                                         </div>
                                     </div>
 
-                                    <p className="mt-2 text-sm text-[var(--bg)]">{n.body}</p>
+                                    <p className={`mt-2 text-sm ${n.read ? 'text-gray-400' : 'text-[var(--bg)]'}`}>{n.body}</p>
                                 </div>
                             </li>
                         ))}

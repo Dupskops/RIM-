@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store';
 import { RegisterSchemaWithConfirm, getPasswordRequirements } from '@/lib/validators';
 import * as v from 'valibot';
 import toast from 'react-hot-toast';
+import { Eye, EyeOff } from 'lucide-react';
 
 
 const RegisterPage = () => {
@@ -17,7 +18,8 @@ const RegisterPage = () => {
     telefono: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
-
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   // Obtener requisitos de contraseña en tiempo real
   const passwordReqs = getPasswordRequirements(formData.password);
 
@@ -38,7 +40,7 @@ const RegisterPage = () => {
       });
 
       toast.success('¡Cuenta creada exitosamente!');
-      navigate({ to: '/app/' });
+      navigate({ to: '/app' });
     } catch (error) {
       // Manejar errores de validación de Valibot
       if (error instanceof v.ValiError) {
@@ -175,18 +177,29 @@ const RegisterPage = () => {
                 <label htmlFor="password" className="block text-sm font-medium text-gray-200 mb-2">
                   Contraseña
                 </label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  required
-                  value={formData.password}
-                  onChange={handleChange}
-                  className={`w-full px-4 py-3 rounded-lg bg-white/10 border ${errors.password ? 'border-red-500' : 'border-white/20'
-                    } text-white placeholder-gray-400 focus:outline-none focus:ring-2 ${errors.password ? 'focus:ring-red-500' : 'focus:ring-blue-500'
-                    }`}
-                  placeholder="••••••••"
-                />
+                <div className="relative">
+                  <input
+                    id="password"
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={formData.password}
+                    onChange={handleChange}
+                    className={`w-full px-4 pr-12 py-3 rounded-lg bg-white/10 border ${errors.password ? 'border-red-500' : 'border-white/20'
+                      } text-white placeholder-gray-400 focus:outline-none focus:ring-2 ${errors.password ? 'focus:ring-red-500' : 'focus:ring-blue-500'
+                      }`}
+                    placeholder="••••••••"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-white/70 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
                 {errors.password && (
                   <p className="mt-1 text-xs text-red-400">{errors.password}</p>
                 )}
@@ -212,22 +225,36 @@ const RegisterPage = () => {
                 <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-200 mb-2">
                   Confirmar Contraseña
                 </label>
-                <input
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  type="password"
-                  required
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  className={`w-full px-4 py-3 rounded-lg bg-white/10 border ${errors.confirmPassword ? 'border-red-500' : 'border-white/20'
-                    } text-white placeholder-gray-400 focus:outline-none focus:ring-2 ${errors.confirmPassword ? 'focus:ring-red-500' : 'focus:ring-blue-500'
-                    }`}
-                  placeholder="••••••••"
-                />
+                <div className="relative">
+                  <input
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    value={formData.confirmPassword}
+                    onChange={handleChange}
+                    className={`w-full px-4 pr-12 py-3 rounded-lg bg-white/10 border ${errors.confirmPassword ? 'border-red-500' : 'border-white/20'
+                      } text-white placeholder-gray-400 focus:outline-none focus:ring-2 ${errors.confirmPassword ? 'focus:ring-red-500' : 'focus:ring-blue-500'
+                      }`}
+                    placeholder="••••••••"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((s) => !s)}
+                    aria-label={showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-white/70 hover:text-white"
+                  >
+                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
                 {errors.confirmPassword && (
                   <p className="mt-1 text-xs text-red-400">{errors.confirmPassword}</p>
                 )}
+
+                
               </div>
+
 
               <button
                 type="submit"
