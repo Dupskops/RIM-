@@ -2,7 +2,7 @@
 Modelos base para peticiones y respuestas de la API.
 Proporciona estructuras genéricas y reutilizables para estandarizar la comunicación.
 """
-from typing import Generic, TypeVar, Optional, Any, List
+from typing import Generic, TypeVar, Optional, Any, List, Dict
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -500,7 +500,7 @@ class FilterParams(BaseModel):
 def create_success_response(
     message: str,
     data: Optional[Any] = None
-) -> dict:
+) -> Dict[str, Any]:
     """
     Helper para crear respuestas de éxito rápidamente.
     
@@ -523,7 +523,7 @@ def create_error_response(
     message: str,
     details: Optional[List[ErrorDetail]] = None,
     path: Optional[str] = None
-) -> dict:
+) -> Dict[str, Any]:
     """
     Helper para crear respuestas de error rápidamente.
     

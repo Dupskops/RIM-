@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import select, func, desc, asc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Suscripcion, PlanType, SuscripcionStatus
+from .models import Suscripcion
 
 
 class SuscripcionRepository:
@@ -317,3 +317,9 @@ class SuscripcionRepository:
             "ingresos_totales": float(ingresos_totales),
             "tasa_conversion": round(tasa_conversion, 2)
         }
+
+class PlanesRepository:
+    """Repositorio para operaciones CRUD de planes."""
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
