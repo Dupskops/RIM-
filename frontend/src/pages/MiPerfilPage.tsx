@@ -41,12 +41,10 @@ type UserProfile = {
     email: string;
     telefono: string;
     direccion: string;
-    usuario: string;
     registro: string;
     foto: string;
     preferencias: { correo: boolean; app: boolean; sms: boolean };
     idioma: string;
-    rol: string;
     tarjeta: string;
 };
 
@@ -91,9 +89,22 @@ const MiPerfilPage: React.FC = () => {
 
     // planes disponibles
     const [plans] = useState<Plan[]>(() => [
-        { id: 1, nombre: 'Freemium', precio: 'Gratis', resumen: 'Funciones básicas de monitoreo', incluye: ['Registro de vehículo', 'Historial básico', 'Notificaciones básicas'] },
-        { id: 2, nombre: 'Premium', precio: '$9.99/mes', resumen: 'Soporte y mantenimiento ampliado', incluye: ['Recordatorios personalizados', 'Descuentos en talleres', 'Soporte prioritario', 'Reportes avanzados'] },
-        { id: 3, nombre: 'Platinum', precio: '$19.99/mes', resumen: 'Cobertura completa y beneficios', incluye: ['Asistencia en carretera', 'Mantenimiento preventivo anual', 'Seguro parcial', 'Consultoría personalizada'] },
+        { id: 1, nombre: 'Freemium', precio: 'Gratis', resumen: 'Acceso a funciones básicas de monitoreo y chatbot limitado', incluye: 
+            ['Registro de vehículo', 
+            'Historial básico', 
+            'Notificaciones básicas', 
+            'Chatbot con límite de consultas',
+            'Acceso completo a la app con límite de interacciones'] },
+        { id: 2, nombre: 'Premium', precio: '$9.90/mes', resumen: 'Soporte completo, sin límites y funciones avanzadas', incluye: 
+            [ 'Recordatorios personalizados', 
+            'Descuentos en talleres', 
+            'Soporte prioritario', 
+            'Reportes avanzados', 
+            'Acceso ilimitado al chatbot',
+            'Consultas ilimitadas al chatbot',
+            'Acceso a funciones exclusivas de la app',
+            'Análisis de datos detallado',
+            'Asesoramiento personalizado en mantenimiento'] },
     ]);
 
     const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
@@ -276,7 +287,7 @@ const MiPerfilPage: React.FC = () => {
                         <div className="bg-[var(--card)] rounded-xl p-5">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="font-semibold text-[var(--color-2)]">Planes</h3>
-                                <div className="text-[var(--color-2)]">Elige el plan que más te convenga</div>
+                                <div className="text-[var(--color-2)]">Escoge el plan ideal</div>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

@@ -65,8 +65,6 @@ const BienvenidaPage: React.FC = () => {
                                             <path d="M5 12h14M13 5l7 7-7 7" stroke="#000" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                                         </svg>
                                     </button>
-
-                                    <a href="#" className="hidden md:inline-block text-sm text-white/90 hover:underline">Ver recorrido</a>
                                 </div>
 
                                 <div className="mt-2 flex items-center justify-center gap-3">
