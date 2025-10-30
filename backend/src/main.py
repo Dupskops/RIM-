@@ -2,7 +2,7 @@
 RIM - Sistema Inteligente de Moto con IA
 Punto de entrada principal de la aplicación.
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
@@ -30,6 +30,8 @@ from .mantenimiento import mantenimiento_router
 from .chatbot import chatbot_router
 from .notificaciones import notificaciones_router
 from .ml import ml_router
+# Endpoint websocket de notificaciones
+from .notificaciones.websocket import notificacion_websocket_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -324,5 +326,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,
-        log_level=(settings.LOG_LEVEL or "info").lower()
+        log_level=(settings.LOG_LEVEL or "debug").lower()
     )

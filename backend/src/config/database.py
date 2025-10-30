@@ -76,7 +76,25 @@ async def init_db():
     Solo usar en desarrollo. En producción usar Alembic.
     """
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # Intentar crear las tablas/índices. En algunos entornos de dev puede
+        # ocurrir que ciertos índices o tablas ya existan (por migraciones
+        # anteriores o ejecuciones parciales). Capturamos errores de tipo
+        # ProgrammingError (p. ej. DuplicateTableError de asyncpg) y los
+        # ignoramos con un warning para no bloquear el arranque de la app.
+        from sqlalchemy.exc import ProgrammingError
+
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+        except ProgrammingError as e:
+            # Mensaje típico: "la relación «ix_xxx» ya existe"
+            logger.warning(
+                "Ignorando ProgrammingError durante create_all (posible objeto existente): %s",
+                e,
+            )
+        except Exception as e:
+            # Para otros errores, relanzamos después de loggear
+            logger.error("Error inicializando la base de datos: %s", e)
+            raise
 
 
 async def close_db():

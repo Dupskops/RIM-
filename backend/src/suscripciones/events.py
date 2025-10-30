@@ -3,7 +3,7 @@ Eventos del dominio de suscripciones.
 """
 from dataclasses import dataclass, field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.shared.event_bus import Event
 
@@ -228,5 +228,109 @@ async def emit_suscripcion_updated(
         usuario_id=usuario_id,
         updated_fields=updated_fields,
         updated_by=updated_by
+    )
+    await event.emit()
+
+
+# ------------------
+# Eventos de pagos
+# ------------------
+
+
+@dataclass
+class TransaccionCreatedEvent(Event):
+    """Evento: Transacción creada (checkout iniciado)."""
+
+    transaccion_id: int = field(default=0)
+    usuario_id: Optional[int] = None
+    plan_id: Optional[int] = None
+    monto: Optional[str] = None
+    status: str = field(default="pending")
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class TransaccionUpdatedEvent(Event):
+    """Evento: Transacción actualizada (status changed)."""
+
+    transaccion_id: int = field(default=0)
+    status: Optional[str] = None
+    provider_metadata: Optional[dict] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass
+class SuscripcionActualizadaEvent(Event):
+    """Evento: Suscripción actualizada (payload compatible con docs/EVENTS.md)."""
+
+    suscripcion_id: Optional[int] = None
+    usuario_id: Optional[int] = None
+    plan_anterior: Optional[str] = None
+    plan_nuevo: Optional[str] = None
+    fecha_inicio: Optional[datetime] = None
+    fecha_fin: Optional[datetime] = None
+    transaccion_id: Optional[int] = None
+
+
+async def emit_transaccion_creada(
+    transaccion_id: int,
+    usuario_id: Optional[int] = None,
+    plan_id: Optional[int] = None,
+    monto: Optional[str] = None,
+    status: str = "pending",
+    created_at: Optional[datetime] = None,
+) -> None:
+    """Emite evento `transaccion.creada`.
+
+    Payload de ejemplo en docs/EVENTS.md.
+    """
+    event = TransaccionCreatedEvent(
+        transaccion_id=transaccion_id,
+        usuario_id=usuario_id,
+        plan_id=plan_id,
+        monto=monto,
+        status=status,
+        created_at=created_at or datetime.now(timezone.utc),
+    )
+    await event.emit()
+
+
+async def emit_transaccion_actualizada(
+    transaccion_id: int,
+    status: Optional[str] = None,
+    provider_metadata: Optional[dict] = None,
+    updated_at: Optional[datetime] = None,
+) -> None:
+    """Emite evento `transaccion.actualizada`."""
+    event = TransaccionUpdatedEvent(
+        transaccion_id=transaccion_id,
+        status=status,
+        provider_metadata=provider_metadata,
+        updated_at=updated_at or datetime.now(timezone.utc),
+    )
+    await event.emit()
+
+
+async def emit_suscripcion_actualizada(
+    suscripcion_id: Optional[int],
+    usuario_id: Optional[int],
+    plan_anterior: Optional[str],
+    plan_nuevo: Optional[str],
+    fecha_inicio: Optional[datetime],
+    fecha_fin: Optional[datetime],
+    transaccion_id: Optional[int] = None,
+) -> None:
+    """Alias/compatibilidad para emitir `suscripcion.actualizada` con payload esperado.
+
+    Usa la clase `SuscripcionActualizadaEvent`.
+    """
+    event = SuscripcionActualizadaEvent(
+        suscripcion_id=suscripcion_id,
+        usuario_id=usuario_id,
+        plan_anterior=plan_anterior,
+        plan_nuevo=plan_nuevo,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        transaccion_id=transaccion_id,
     )
     await event.emit()
