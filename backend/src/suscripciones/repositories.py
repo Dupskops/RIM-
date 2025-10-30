@@ -27,14 +27,111 @@ class SuscripcionRepository:
 
     # -- Suscripción (tabla suscripciones_usuario) --
     async def get_by_id(self, suscripcion_id: int) -> Optional[Suscripcion]:
-        """Retorna la Suscripcion ORM por id o None."""
-        return await self.session.get(Suscripcion, suscripcion_id)
+        """Retorna la Suscripcion ORM por id o None con eager loading del plan y características."""
+        from sqlalchemy.orm import selectinload
+        
+        stmt = (
+            select(Suscripcion)
+            .options(
+                selectinload(Suscripcion.plan).selectinload(Plan.caracteristicas)
+            )
+            .where(Suscripcion.id == suscripcion_id)
+        )
+        res = await self.session.execute(stmt)
+        return res.scalars().first()
+
+    async def get_by_usuario_id(self, usuario_id: int) -> Optional[Suscripcion]:
+        """Obtiene la suscripción más reciente de un usuario con eager loading completo."""
+        from sqlalchemy.orm import selectinload
+        
+        stmt = (
+            select(Suscripcion)
+            .options(
+                selectinload(Suscripcion.plan).selectinload(Plan.caracteristicas)
+            )
+            .where(Suscripcion.usuario_id == usuario_id)
+            .order_by(desc(Suscripcion.id))
+            .limit(1)
+        )
+        res = await self.session.execute(stmt)
+        return res.scalars().first()
+
+    async def list_by_usuario_id(
+        self, 
+        usuario_id: Optional[int] = None,
+        offset: int = 0,
+        limit: int = 20
+    ) -> tuple[list[Suscripcion], int]:
+        """Lista suscripciones con paginación y eager loading completo.
+        
+        Si usuario_id es None, lista todas (admin).
+        Retorna (lista_suscripciones, total_count).
+        """
+        from sqlalchemy.orm import selectinload
+        
+        # Query principal con eager loading completo
+        stmt = (
+            select(Suscripcion)
+            .options(
+                selectinload(Suscripcion.plan).selectinload(Plan.caracteristicas)
+            )
+        )
+        
+        if usuario_id is not None:
+            stmt = stmt.where(Suscripcion.usuario_id == usuario_id)
+        
+        stmt = stmt.order_by(desc(Suscripcion.id)).offset(offset).limit(limit)
+        
+        res = await self.session.execute(stmt)
+        items = list(res.scalars().all())
+        
+        # Contar total
+        count_stmt = select(func.count(Suscripcion.id))
+        if usuario_id is not None:
+            count_stmt = count_stmt.where(Suscripcion.usuario_id == usuario_id)
+        
+        count_res = await self.session.execute(count_stmt)
+        total = count_res.scalar() or 0
+        
+        return items, int(total)
 
     # -- Planes / transacciones relacionadas a pagos (tabla transacciones) --
     async def get_plan_by_id(self, plan_id: int) -> Optional[Plan]:
         stmt = select(Plan).where(Plan.id == plan_id)
         res = await self.session.execute(stmt)
         return res.scalars().first()
+
+    async def get_or_create_free_plan(self) -> Plan:
+        """Busca el plan FREE/FREEMIUM en la base de datos.
+        
+        Si no existe, lo crea automáticamente con precio 0.00 y periodo UNICO.
+        Busca de forma case-insensitive varios nombres posibles: FREE, FREEMIUM, GRATIS.
+        
+        Returns:
+            Plan: El plan FREE encontrado o creado.
+        """
+        from decimal import Decimal
+        from .models import PeriodoPlan
+        
+        # Buscar plan con varios nombres posibles (case-insensitive)
+        stmt = select(Plan).where(
+            func.lower(Plan.nombre_plan).in_(["free", "freemium", "gratis"])
+        )
+        res = await self.session.execute(stmt)
+        plan = res.scalars().first()
+        
+        if plan:
+            return plan
+        
+        # Crear el plan FREE si no existe
+        plan = Plan(
+            nombre_plan="FREE",
+            precio=Decimal("0.00"),
+            periodo_facturacion=PeriodoPlan.UNICO,
+        )
+        self.session.add(plan)
+        await self.session.flush()
+        return plan
 
     async def create_transaccion(self, data: dict) -> Optional[SimpleNamespace]:
         """Inserta una fila en la tabla `transacciones` y retorna el row (SimpleNamespace).
@@ -131,8 +228,16 @@ class SuscripcionRepository:
 
     async def assign_plan_to_user(self, usuario_id: int, plan_id: int, fecha_inicio: Optional[datetime] = None, fecha_fin: Optional[datetime] = None) -> Suscripcion:
         """Asigna un plan al usuario: crea o actualiza la suscripción existente."""
-        # Buscar suscripción existente activa para el usuario
-        stmt = select(Suscripcion).where(Suscripcion.usuario_id == usuario_id).order_by(desc(Suscripcion.id)).limit(1)
+        from sqlalchemy.orm import selectinload
+        
+        # Buscar suscripción existente activa para el usuario con eager loading
+        stmt = (
+            select(Suscripcion)
+            .options(selectinload(Suscripcion.plan).selectinload(Plan.caracteristicas))
+            .where(Suscripcion.usuario_id == usuario_id)
+            .order_by(desc(Suscripcion.id))
+            .limit(1)
+        )
         res = await self.session.execute(stmt)
         existing = res.scalars().first()
 
@@ -142,10 +247,15 @@ class SuscripcionRepository:
                 existing.plan_id = plan_id
             if fecha_inicio is not None:
                 existing.fecha_inicio = fecha_inicio
-            if fecha_fin is not None:
-                existing.fecha_fin = fecha_fin
+            # Siempre actualizar fecha_fin (incluso si es None para limpiarlo)
+            existing.fecha_fin = fecha_fin
             await self.session.flush()
             await self.session.commit()
+            # Refrescar con eager loading después del commit
+            await self.session.refresh(
+                existing,
+                attribute_names=['plan']
+            )
             return existing
 
         # crear nueva suscripción
@@ -159,6 +269,11 @@ class SuscripcionRepository:
         self.session.add(sus)
         await self.session.flush()
         await self.session.commit()
+        # Refrescar para cargar la relación plan con eager loading
+        await self.session.refresh(
+            sus,
+            attribute_names=['plan']
+        )
         return sus
 
 class PlanesRepository:
@@ -172,3 +287,35 @@ class PlanesRepository:
         stmt = select(Plan)
         res = await self.session.execute(stmt)
         return res.scalars().all()
+
+    async def get_or_create_free_plan(self) -> Plan:
+        """Busca el plan FREE/FREEMIUM en la base de datos.
+        
+        Si no existe, lo crea automáticamente con precio 0.00 y periodo UNICO.
+        Busca de forma case-insensitive varios nombres posibles: FREE, FREEMIUM, GRATIS.
+        
+        Returns:
+            Plan: El plan FREE encontrado o creado.
+        """
+        from decimal import Decimal
+        from .models import PeriodoPlan
+        
+        # Buscar plan con varios nombres posibles (case-insensitive)
+        stmt = select(Plan).where(
+            func.lower(Plan.nombre_plan).in_(["free", "freemium", "gratis"])
+        )
+        res = await self.session.execute(stmt)
+        plan = res.scalars().first()
+        
+        if plan:
+            return plan
+        
+        # Crear el plan FREE si no existe
+        plan = Plan(
+            nombre_plan="FREE",
+            precio=Decimal("0.00"),
+            periodo_facturacion=PeriodoPlan.UNICO,
+        )
+        self.session.add(plan)
+        await self.session.flush()
+        return plan

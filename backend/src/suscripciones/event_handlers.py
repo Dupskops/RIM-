@@ -47,17 +47,13 @@ async def handle_user_registered(event: UserRegisteredEvent) -> None:
             existing = res.scalars().first()
             if existing:
                 logger.warning(
-                    f"⚠️ Usuario {usuario_id} ya tiene suscripción activa. No se crea suscripción Freemium."
+                    f"⚠️ Usuario {usuario_id} ya tiene suscripción activa. No se crea suscripción Free."
                 )
                 return
 
-            # Buscar el plan 'freemium' en la tabla de planes
-            plan_stmt = select(Plan).where(func.lower(Plan.nombre_plan) == "freemium")
-            plan_res = await session.execute(plan_stmt)
-            plan = plan_res.scalars().first()
-            if not plan:
-                logger.warning(f"⚠️ No se encontró el plan 'freemium' en la base de datos. No se crea suscripción para usuario {usuario_id}.")
-                return
+            # Obtener o crear el plan FREE usando el método del repositorio
+            plan = await repo.get_or_create_free_plan()
+            logger.info("✅ Plan FREE encontrado/creado con ID: %s", plan.id)
 
             # Preparar datos de suscripción Freemium usando el objeto Plan (asigna plan_id)
             suscripcion_data = service.prepare_suscripcion_data(

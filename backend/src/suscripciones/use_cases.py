@@ -12,8 +12,10 @@ Implementa los flujos principales descritos en `docs/USE_CASES.md`:
 Las implementaciones asumen ciertos métodos en el repository/service; añado
 comentarios donde haya que adaptar nombres si difieren en tu proyecto.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+from typing import Optional
+from .models import Suscripcion, Plan, EstadoSuscripcion
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -55,6 +57,201 @@ from .events import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class GetMySuscripcionUseCase:
+    """Obtener la suscripción activa del usuario autenticado."""
+    
+    async def execute(self, session: AsyncSession, usuario_id: int) -> SuscripcionUsuarioReadSchema:
+        """
+        Obtiene la suscripción más reciente del usuario.
+        
+        Args:
+            session: Sesión de base de datos
+            usuario_id: ID del usuario
+            
+        Returns:
+            SuscripcionUsuarioReadSchema con los datos de la suscripción
+            
+        Raises:
+            HTTPException: Si no se encuentra suscripción
+        """
+        logger.debug("GetMySuscripcionUseCase.execute: usuario_id=%s", usuario_id)
+        
+        try:
+            repo = SuscripcionRepository(session)
+            service = SuscripcionService()
+            
+            suscripcion = await repo.get_by_usuario_id(usuario_id)
+            
+            if not suscripcion:
+                logger.warning("GetMySuscripcionUseCase.execute: no se encontró suscripción para usuario_id=%s", usuario_id)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No se encontró suscripción activa"
+                )
+            
+            # El plan ya está eager-loaded, no causará lazy loading
+            response_data = service.build_suscripcion_response(suscripcion)
+            
+            logger.info("GetMySuscripcionUseCase.execute: suscripción obtenida id=%s", suscripcion.id)
+            
+            return SuscripcionUsuarioReadSchema(**response_data)
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("GetMySuscripcionUseCase.execute: error inesperado: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error interno al obtener suscripción"
+            )
+
+
+class ListSuscripcionesUseCase:
+    """Listar suscripciones con paginación."""
+    
+    async def execute(
+        self,
+        session: AsyncSession,
+        usuario_id: Optional[int],
+        page: int = 1,
+        per_page: int = 20,
+        is_admin: bool = False
+    ) -> dict:
+        """
+        Lista suscripciones del usuario o todas si es admin.
+        
+        Args:
+            session: Sesión de base de datos
+            usuario_id: ID del usuario (None si es admin listando todas)
+            page: Página actual
+            per_page: Elementos por página
+            is_admin: Si el usuario es admin
+            
+        Returns:
+            Diccionario con formato PaginatedResponse
+        """
+        logger.debug(
+            "ListSuscripcionesUseCase.execute: usuario_id=%s page=%d per_page=%d is_admin=%s",
+            usuario_id, page, per_page, is_admin
+        )
+        
+        try:
+            repo = SuscripcionRepository(session)
+            service = SuscripcionService()
+            
+            offset = (page - 1) * per_page
+            
+            # Si es admin, puede ver todas; si no, solo las suyas
+            filter_usuario_id = None if is_admin else usuario_id
+            
+            suscripciones, total = await repo.list_by_usuario_id(
+                usuario_id=filter_usuario_id,
+                offset=offset,
+                limit=per_page
+            )
+            
+            # Convertir a schemas
+            items = []
+            for sus in suscripciones:
+                response_data = service.build_suscripcion_response(sus)
+                items.append(SuscripcionUsuarioReadSchema(**response_data))
+            
+            logger.info(
+                "ListSuscripcionesUseCase.execute: retornando %d suscripciones (total=%d)",
+                len(items), total
+            )
+            
+            return create_paginated_response(
+                message="Suscripciones obtenidas exitosamente",
+                data=items,
+                page=page,
+                per_page=per_page,
+                total_items=total
+            )
+            
+        except Exception as e:
+            logger.exception("ListSuscripcionesUseCase.execute: error inesperado: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error interno al listar suscripciones"
+            )
+
+
+class GetSuscripcionByIdUseCase:
+    """Obtener una suscripción específica por ID."""
+    
+    async def execute(
+        self,
+        session: AsyncSession,
+        suscripcion_id: int,
+        current_user_id: int,
+        is_admin: bool = False
+    ) -> SuscripcionUsuarioReadSchema:
+        """
+        Obtiene una suscripción por ID con control de acceso.
+        
+        Args:
+            session: Sesión de base de datos
+            suscripcion_id: ID de la suscripción
+            current_user_id: ID del usuario actual
+            is_admin: Si el usuario es admin
+            
+        Returns:
+            SuscripcionUsuarioReadSchema
+            
+        Raises:
+            HTTPException: Si no se encuentra o no tiene permisos
+        """
+        logger.debug(
+            "GetSuscripcionByIdUseCase.execute: suscripcion_id=%s current_user_id=%s is_admin=%s",
+            suscripcion_id, current_user_id, is_admin
+        )
+        
+        try:
+            repo = SuscripcionRepository(session)
+            service = SuscripcionService()
+            
+            # Obtener con eager loading del plan usando el repositorio
+            suscripcion = await repo.get_by_id(suscripcion_id)
+            
+            if not suscripcion:
+                logger.warning(
+                    "GetSuscripcionByIdUseCase.execute: suscripción no encontrada id=%s",
+                    suscripcion_id
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Suscripción no encontrada"
+                )
+            
+            # Control de acceso
+            if not is_admin and suscripcion.usuario_id != current_user_id:
+                logger.warning(
+                    "GetSuscripcionByIdUseCase.execute: acceso denegado suscripcion_id=%s usuario_id=%s",
+                    suscripcion_id, current_user_id
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="No tiene permisos para acceder a esta suscripción"
+                )
+            
+            # El plan y características ya están cargados con eager loading
+            response_data = service.build_suscripcion_response(suscripcion)
+            
+            logger.info("GetSuscripcionByIdUseCase.execute: suscripción obtenida id=%s", suscripcion_id)
+            
+            return SuscripcionUsuarioReadSchema(**response_data)
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("GetSuscripcionByIdUseCase.execute: error inesperado: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error interno al obtener suscripción"
+            )
 
 
 class ListPlanesUseCase:
@@ -268,15 +465,43 @@ class CancelSuscripcionUseCase:
                     logger.info("CancelSuscripcionUseCase.execute: cancelación no permitida por service: %s", reason)
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason or "No se puede cancelar")
 
-            update_data = {}
-            if request.mode == "immediate":
-                update_data["estado_suscripcion"] = "CANCELLED"
-                update_data["fecha_fin"] = datetime.now(timezone.utc)
-                update_data["cancelled_at"] = datetime.now(timezone.utc)
-            else:
-                update_data["estado_suscripcion"] = "CANCELLATION_SCHEDULED"
+            # Buscar plan FREE para hacer downgrade
+            from sqlalchemy import select, func
+            stmt = select(Plan).where(func.upper(Plan.nombre_plan) == "FREE")
+            result = await session.execute(stmt)
+            plan_free = result.scalars().first()
+            
+            if not plan_free:
+                logger.error("CancelSuscripcionUseCase.execute: Plan FREE no encontrado en BD")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Error: Plan FREE no encontrado. Contacta al administrador."
+                )
 
-            updated = await repository.update(sus, update_data)
+            if request.mode == "immediate":
+                # Downgrade inmediato a FREE
+                logger.info("CancelSuscripcionUseCase.execute: Downgrade inmediato a FREE para usuario=%s", usuario_id)
+                
+                updated = await repository.assign_plan_to_user(
+                    usuario_id=usuario_id,
+                    plan_id=plan_free.id,
+                    fecha_inicio=datetime.now(timezone.utc),
+                    fecha_fin=None  # FREE no tiene fecha de fin
+                )
+                
+                # Marcar como cancelada la anterior
+                # (assign_plan_to_user ya crea/actualiza la suscripción)
+            else:
+                # Para end_of_period, marcar para cancelar al final del periodo
+                # pero mantener PREMIUM hasta que llegue la fecha_fin
+                update_data = {}
+                if not sus.fecha_fin:
+                    # Si no tiene fecha_fin, calcular una (ej: 30 días desde ahora)
+                    update_data["fecha_fin"] = datetime.now(timezone.utc) + timedelta(days=30)
+                # No cambiar el estado ni el plan aún, solo marcar la fecha de fin
+                
+                updated = await repository.update(sus, update_data)
+                logger.info("CancelSuscripcionUseCase.execute: Cancelación programada para fecha_fin=%s", updated.fecha_fin)
 
             try:
                 await emit_suscripcion_actualizada(

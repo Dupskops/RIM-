@@ -18,6 +18,7 @@ from .schemas import (
     SuscripcionCancelRequest,
     AdminAssignSubscriptionRequest,
     PaymentNotificationSchema,
+    CancelMode,
 )
 
 
@@ -123,13 +124,15 @@ def validate_checkout_payload(payload: Union[Dict[str, Any], CheckoutCreateReque
 def validate_cancel_payload(payload: Union[Dict[str, Any], SuscripcionCancelRequest]) -> tuple[bool, Optional[str]]:
     """Valida `PATCH /suscripciones/{id}/cancel`.
 
-    - `mode` debe ser 'immediate' o 'end_of_period'
+    - `mode` debe ser 'immediate' o 'end_of_period' (validado por enum CancelMode)
     - `reason` si existe no debe ser excesivamente larga
     """
     if isinstance(payload, BaseModel):
-        data = payload.model_dump()
-    else:
-        data = dict(payload or {})
+        # Si ya es un BaseModel validado por Pydantic, confiar en la validación del enum
+        return True, None
+    
+    # Validación para dict (por compatibilidad)
+    data = dict(payload or {})
 
     mode = data.get("mode")
     if mode not in {"immediate", "end_of_period"}:
@@ -138,7 +141,7 @@ def validate_cancel_payload(payload: Union[Dict[str, Any], SuscripcionCancelRequ
     reason = data.get("reason")
     if reason is not None:
         if not isinstance(reason, str) or len(reason) > 1000:
-            return False, "reason inválido o demasiado largo"
+            return False, "reason inválido o demasiado largo (máximo 1000 caracteres)"
 
     return True, None
 

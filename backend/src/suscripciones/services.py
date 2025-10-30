@@ -143,26 +143,48 @@ class SuscripcionService:
 
         Devuelve las llaves: `suscripcion_id`, `plan`, `estado_suscripcion`,
         `fecha_inicio`, `fecha_fin`.
+        
+        IMPORTANTE: Asume que el plan y sus características ya están eager-loaded.
         """
         plan_field = None
         if hasattr(suscripcion, "plan") and suscripcion.plan is not None:
             p = suscripcion.plan
+            
+            # Intentar obtener características de forma segura
+            # Usar __dict__ para evitar lazy loading si no está cargado
+            caracteristicas_list = []
+            if 'caracteristicas' in p.__dict__:
+                # Ya está cargado en el __dict__, es seguro acceder
+                caracteristicas_orm = getattr(p, "caracteristicas", []) or []
+                # Convertir objetos ORM a diccionarios para Pydantic
+                caracteristicas_list = [
+                    {
+                        "clave_funcion": getattr(c, "clave_funcion", None),
+                        "descripcion": getattr(c, "descripcion", None),
+                    }
+                    for c in caracteristicas_orm
+                ]
+            
             # Intentar mapear los campos más relevantes del plan
             plan_field = {
                 "id": getattr(p, "id", None),
                 "nombre_plan": getattr(p, "nombre_plan", None),
                 "precio": getattr(p, "precio", None),
                 "periodo_facturacion": getattr(p, "periodo_facturacion", None),
-                "caracteristicas": getattr(p, "caracteristicas", []) or [],
+                "caracteristicas": caracteristicas_list,
             }
         else:
             # si no hay relación cargada, intentar usar plan_id
             plan_field = {"id": getattr(suscripcion, "plan_id", None)}
 
+        # Obtener el valor del enum correctamente
+        estado = getattr(suscripcion, "estado_suscripcion", None)
+        estado_valor = estado.value if hasattr(estado, 'value') else str(estado)
+        
         return {
             "suscripcion_id": getattr(suscripcion, "id", None),
             "plan": plan_field,
-            "estado_suscripcion": str(getattr(suscripcion, "estado_suscripcion", None)),
+            "estado_suscripcion": estado_valor,
             "fecha_inicio": getattr(suscripcion, "fecha_inicio", None),
             "fecha_fin": getattr(suscripcion, "fecha_fin", None),
         }

@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # ============================================
     # BASE DE DATOS
     # ============================================
-    DATABASE_URL: str = "postgresql+asyncpg://YOU_USERNAME:YOUR_PASSWORD@localhost:5432/YOUR_DB_NAME"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rim_db_v2"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     DATABASE_ECHO: bool = False  # Log de queries SQL

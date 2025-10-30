@@ -10,8 +10,20 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Any, List
+from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+# ----------------------
+# Enums
+# ----------------------
+
+
+class CancelMode(str, Enum):
+    """Modos de cancelación de suscripción."""
+    IMMEDIATE = "immediate"
+    END_OF_PERIOD = "end_of_period"
 
 
 # ----------------------
@@ -95,8 +107,15 @@ class CheckoutCreateRequest(BaseModel):
 
 
 class SuscripcionCancelRequest(BaseModel):
-    mode: str = Field(..., description="'immediate' | 'end_of_period'")
-    reason: Optional[str] = None
+    mode: CancelMode = Field(
+        ..., 
+        description="Modo de cancelación: 'immediate' (inmediato) o 'end_of_period' (al final del periodo)"
+    )
+    reason: Optional[str] = Field(
+        None, 
+        max_length=1000,
+        description="Motivo opcional de cancelación"
+    )
 
 
 class AdminAssignSubscriptionRequest(BaseModel):
@@ -107,6 +126,7 @@ class AdminAssignSubscriptionRequest(BaseModel):
 
 
 __all__ = [
+    "CancelMode",
     "CaracteristicaReadSchema",
     "PlanReadSchema",
     "SuscripcionUsuarioReadSchema",
