@@ -13,7 +13,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
 
 from .models import SensorState
-from ..motos.models import ComponentState
+from .motos.models import ComponentState
 
 
 # ============================================

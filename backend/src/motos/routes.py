@@ -1,379 +1,96 @@
-"""
-Rutas FastAPI para gestión de motos.
-"""
-from typing import Annotated
-from fastapi import APIRouter, Depends, status
-from uuid import UUID
-
-from ..config.dependencies import get_db, get_current_user, require_admin
-from ..auth.models import Usuario
+from typing import List
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.shared.base_models import (
-    ApiResponse,
-    SuccessResponse,
-    PaginatedResponse,
-    PaginationParams,
-    create_paginated_response
-)
-from .repositories import MotoRepository
-from .services import MotoService
-from .schemas import (
-    RegisterMotoRequest,
-    UpdateMotoRequest,
-    UpdateKilometrajeRequest,
-    MotoFilterParams,
-    MotoResponse,
-    MotoStatsResponse
-)
+from src.config.dependencies import get_db, get_current_user
+from src.shared.base_models import ApiResponse
+from .schemas import MotoCreateSchema, MotoReadSchema, MotoUpdateSchema, EstadoActualSchema, DiagnosticoGeneralSchema
 from .use_cases import (
-    RegisterMotoUseCase,
+    CreateMotoUseCase,
     GetMotoUseCase,
     ListMotosUseCase,
     UpdateMotoUseCase,
     DeleteMotoUseCase,
-    UpdateKilometrajeUseCase,
-    GetMotoStatsUseCase
-)
-from .use_cases import (
-    CreateComponenteUseCase,
-    GetComponenteUseCase,
-    ListComponentesUseCase,
-    UpdateComponenteUseCase,
-    DeleteComponenteUseCase
-)
-from .schemas import (
-    MotoComponenteCreate,
-    MotoComponenteUpdate,
-    MotoComponenteRead
+    GetEstadoActualUseCase,
+    GetDiagnosticoGeneralUseCase
 )
 
 
 router = APIRouter()
 
 
-# ==================== DEPENDENCIES ====================
-
-async def get_moto_repository(
-    db: Annotated[AsyncSession, Depends(get_db)]
-) -> MotoRepository:
-    """Inyección de dependencia del repositorio de motos."""
-    return MotoRepository(db)
-
-
-def get_moto_service() -> MotoService:
-    """Inyección de dependencia del servicio de motos."""
-    return MotoService()
+@router.post("", response_model=ApiResponse[MotoReadSchema], status_code=status.HTTP_201_CREATED)
+async def create_moto(
+    data: MotoCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = CreateMotoUseCase(db)
+    moto = await use_case.execute(data, current_user["id"])
+    return ApiResponse.success(data=moto, message="Moto creada exitosamente")
 
 
-# ==================== ENDPOINTS ====================
-
-@router.post(
-    "/",
-    response_model=ApiResponse[MotoResponse],
-    status_code=status.HTTP_201_CREATED,
-    summary="Registrar nueva moto"
-)
-async def register_moto(
-    request: RegisterMotoRequest,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> ApiResponse[MotoResponse]:
-    """
-    Registra una nueva moto KTM.
-    
-    - **vin**: VIN de 17 caracteres (único)
-    - **modelo**: Modelo de la moto (ej: Duke 390)
-    - **año**: Año de fabricación (1990 - actual + 1)
-    - **placa**: Placa de la moto (opcional, único)
-    - **color**: Color de la moto (opcional)
-    - **kilometraje**: Kilometraje actual (default: 0)
-    - **observaciones**: Observaciones adicionales (opcional)
-    """
-    use_case = RegisterMotoUseCase(repository, service)
-    moto = await use_case.execute(request, current_user.id)
-    return ApiResponse(
-        success=True,
-        message="Moto registrada exitosamente",
-        data=moto
-    )
-
-
-@router.get(
-    "/",
-    response_model=PaginatedResponse[MotoResponse],
-    summary="Listar motos"
-)
-async def list_motos(
-    filters: Annotated[MotoFilterParams, Depends()],
-    pagination: Annotated[PaginationParams, Depends()],
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> PaginatedResponse[MotoResponse]:
-    """
-    Lista motos con filtros y paginación.
-    
-    - **Usuarios normales**: Solo ven sus propias motos
-    - **Admins**: Pueden ver todas las motos y filtrar por usuario
-    
-    Filtros disponibles:
-    - **usuario_id**: ID del usuario (solo admins)
-    - **modelo**: Búsqueda parcial por modelo
-    - **año_desde/año_hasta**: Rango de años
-    - **vin**: Buscar por VIN específico
-    - **placa**: Buscar por placa específica
-    - **page**: Número de página (default: 1)
-    - **per_page**: Items por página (default: 20, max: 100)
-    - **order_by**: Campo para ordenar (id, created_at, año, kilometraje, modelo)
-    - **order_direction**: Dirección (asc, desc)
-    """
-    is_admin = current_user.rol == "admin"
-    use_case = ListMotosUseCase(repository, service)
-    motos, total = await use_case.execute(filters, pagination, current_user.id, is_admin)
-    
-    # Construir respuestas
-    motos_response = [
-        MotoResponse(**service.build_moto_response(moto))
-        for moto in motos
-    ]
-    
-    return create_paginated_response(
-        message="Motos obtenidas exitosamente",
-        data=motos_response,
-        page=pagination.page,
-        per_page=pagination.per_page,
-        total_items=total
-    )
-
-
-@router.get(
-    "/stats",
-    response_model=ApiResponse[MotoStatsResponse],
-    summary="Estadísticas de motos (Admin)",
-    dependencies=[Depends(require_admin)]
-)
-async def get_moto_stats(
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)]
-) -> ApiResponse[MotoStatsResponse]:
-    """
-    Obtiene estadísticas de motos (solo admins).
-    
-    Incluye:
-    - Total de motos registradas
-    - Motos por año de fabricación
-    - Kilometraje promedio
-    - Modelos más populares (top 10)
-    """
-    use_case = GetMotoStatsUseCase(repository)
-    stats = await use_case.execute()
-    return ApiResponse(
-        success=True,
-        message="Estadísticas obtenidas exitosamente",
-        data=stats
-    )
-
-
-# ----------------- MotoComponente endpoints -----------------
-
-
-@router.post(
-    "/{moto_id}/componentes",
-    response_model=ApiResponse[MotoComponenteRead],
-    status_code=status.HTTP_201_CREATED,
-    summary="Crear componente para moto"
-)
-async def create_componente(
-    moto_id: int,
-    request: MotoComponenteCreate,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> ApiResponse[MotoComponenteRead]:
-    use_case = CreateComponenteUseCase(repository, service)
-    componente = await use_case.execute(moto_id, request)
-    return ApiResponse(success=True, message="Componente creado", data=componente)
-
-
-@router.get(
-    "/componentes/{componente_id}",
-    response_model=ApiResponse[MotoComponenteRead],
-    summary="Obtener componente por id"
-)
-async def get_componente(
-    componente_id: UUID,
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)],
-    current_user: Annotated[Usuario, Depends(get_current_user)]
-) -> ApiResponse[MotoComponenteRead]:
-    use_case = GetComponenteUseCase(repository, service)
-    componente = await use_case.execute(componente_id)
-    return ApiResponse(success=True, data=componente)
-
-
-@router.get(
-    "/{moto_id}/componentes",
-    response_model=ApiResponse[list[MotoComponenteRead]],
-    summary="Listar componentes de una moto"
-)
-async def list_componentes(
-    moto_id: int,
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)],
-    current_user: Annotated[Usuario, Depends(get_current_user)]
-) -> ApiResponse[list[MotoComponenteRead]]:
-    use_case = ListComponentesUseCase(repository, service)
-    componentes = await use_case.execute(moto_id)
-    return ApiResponse(success=True, data=componentes)
-
-
-@router.put(
-    "/componentes/{componente_id}",
-    response_model=ApiResponse[MotoComponenteRead],
-    summary="Actualizar componente"
-)
-async def update_componente(
-    componente_id: UUID,
-    request: MotoComponenteUpdate,
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)],
-    current_user: Annotated[Usuario, Depends(get_current_user)]
-) -> ApiResponse[MotoComponenteRead]:
-    use_case = UpdateComponenteUseCase(repository, service)
-    componente = await use_case.execute(componente_id, request)
-    return ApiResponse(success=True, message="Componente actualizado", data=componente)
-
-
-@router.delete(
-    "/componentes/{componente_id}",
-    response_model=SuccessResponse[None],
-    summary="Eliminar componente"
-)
-async def delete_componente(
-    componente_id: UUID,
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    current_user: Annotated[Usuario, Depends(get_current_user)]
-) -> SuccessResponse[None]:
-    use_case = DeleteComponenteUseCase(repository)
-    await use_case.execute(componente_id)
-    return SuccessResponse(success=True, message="Componente eliminado")
-
-
-@router.get(
-    "/{moto_id}",
-    response_model=ApiResponse[MotoResponse],
-    summary="Obtener moto por ID"
-)
+@router.get("/{moto_id}", response_model=ApiResponse[MotoReadSchema])
 async def get_moto(
     moto_id: int,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> ApiResponse[MotoResponse]:
-    """
-    Obtiene una moto por ID.
-    
-    - **Usuarios normales**: Solo pueden ver sus propias motos
-    - **Admins**: Pueden ver cualquier moto
-    """
-    is_admin = current_user.rol == "admin"
-    use_case = GetMotoUseCase(repository, service)
-    moto = await use_case.execute(moto_id, current_user.id, is_admin)
-    return ApiResponse(
-        success=True,
-        message="Moto obtenida exitosamente",
-        data=moto
-    )
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = GetMotoUseCase(db)
+    moto = await use_case.execute(moto_id, current_user["id"])
+    return ApiResponse.success(data=moto)
 
 
-@router.patch(
-    "/{moto_id}",
-    response_model=ApiResponse[MotoResponse],
-    summary="Actualizar moto"
-)
+@router.get("", response_model=ApiResponse[List[MotoReadSchema]])
+async def list_motos(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = ListMotosUseCase(db)
+    motos = await use_case.execute(current_user["id"], skip, limit)
+    return ApiResponse.success(data=motos)
+
+
+@router.patch("/{moto_id}", response_model=ApiResponse[MotoReadSchema])
 async def update_moto(
     moto_id: int,
-    request: UpdateMotoRequest,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> ApiResponse[MotoResponse]:
-    """
-    Actualiza una moto (actualización parcial).
-    
-    - **Usuarios normales**: Solo pueden actualizar sus propias motos
-    - **Admins**: Pueden actualizar cualquier moto
-    
-    Campos actualizables:
-    - **placa**: Nueva placa (debe ser única)
-    - **color**: Nuevo color
-    - **kilometraje**: Nuevo kilometraje (debe ser >= actual)
-    - **observaciones**: Nuevas observaciones
-    """
-    is_admin = current_user.rol == "admin"
-    use_case = UpdateMotoUseCase(repository, service)
-    moto = await use_case.execute(moto_id, request, current_user.id, is_admin)
-    return ApiResponse(
-        success=True,
-        message="Moto actualizada exitosamente",
-        data=moto
-    )
+    data: MotoUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = UpdateMotoUseCase(db)
+    moto = await use_case.execute(moto_id, data, current_user["id"])
+    return ApiResponse.success(data=moto, message="Moto actualizada exitosamente")
 
 
-@router.delete(
-    "/{moto_id}",
-    response_model=SuccessResponse[None],
-    summary="Eliminar moto"
-)
+@router.delete("/{moto_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_moto(
     moto_id: int,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> SuccessResponse[None]:
-    """
-    Elimina una moto (soft delete).
-    
-    - **Usuarios normales**: Solo pueden eliminar sus propias motos
-    - **Admins**: Pueden eliminar cualquier moto
-    """
-    is_admin = current_user.rol == "admin"
-    use_case = DeleteMotoUseCase(repository, service)
-    await use_case.execute(moto_id, current_user.id, is_admin)
-    return SuccessResponse(
-        message="Moto eliminada exitosamente",
-        data=None
-    )
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = DeleteMotoUseCase(db)
+    await use_case.execute(moto_id, current_user["id"])
 
 
-@router.patch(
-    "/{moto_id}/kilometraje",
-    response_model=ApiResponse[MotoResponse],
-    summary="Actualizar kilometraje"
-)
-async def update_kilometraje(
+@router.get("/{moto_id}/estado-actual", response_model=ApiResponse[List[EstadoActualSchema]])
+async def get_estado_actual(
     moto_id: int,
-    request: UpdateKilometrajeRequest,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[MotoRepository, Depends(get_moto_repository)],
-    service: Annotated[MotoService, Depends(get_moto_service)]
-) -> ApiResponse[MotoResponse]:
-    """
-    Actualiza solo el kilometraje de una moto.
-    
-    - **Usuarios normales**: Solo pueden actualizar sus propias motos
-    - **Admins**: Pueden actualizar cualquier moto
-    
-    Validaciones:
-    - El nuevo kilometraje debe ser >= al actual
-    - El incremento no puede ser mayor a 100,000 km
-    """
-    is_admin = current_user.rol == "admin"
-    use_case = UpdateKilometrajeUseCase(repository, service)
-    moto = await use_case.execute(moto_id, request, current_user.id, is_admin)
-    return ApiResponse(
-        success=True,
-        message="Kilometraje actualizado exitosamente",
-        data=moto
-    )
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = GetEstadoActualUseCase(db)
+    estados = await use_case.execute(moto_id, current_user["id"])
+    return ApiResponse.success(data=estados)
+
+
+@router.get("/{moto_id}/diagnostico", response_model=ApiResponse[DiagnosticoGeneralSchema])
+async def get_diagnostico_general(
+    moto_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    use_case = GetDiagnosticoGeneralUseCase(db)
+    diagnostico = await use_case.execute(moto_id, current_user["id"])
+    return ApiResponse.success(data=diagnostico)

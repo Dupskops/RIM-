@@ -1,157 +1,97 @@
-"""
-Servicios de lógica de negocio para motos.
-"""
-from typing import Optional
-from datetime import datetime
-import math
-
-from .schemas import MotoResponse, UsuarioBasicInfo
-from .models import Moto, MotoComponente
-from ..auth.models import Usuario
+from typing import Optional, List
+from decimal import Decimal
+from .models import Moto, EstadoActual, ReglaEstado, EstadoSalud, LogicaRegla
+from .events import emit_estado_cambiado, emit_estado_critico_detectado, emit_servicio_vencido
 
 
 class MotoService:
-    """Servicio con lógica de negocio para motos."""
     
     @staticmethod
     def prepare_moto_data(moto_dict: dict, usuario_id: int) -> dict:
-        """
-        Prepara los datos de una moto para creación.
-        
-        Args:
-            moto_dict: Diccionario con datos de la moto
-            usuario_id: ID del usuario propietario
-            
-        Returns:
-            Diccionario con datos preparados
-        """
-        # Normalizar VIN y placa a mayúsculas
-        if "vin" in moto_dict:
-            moto_dict["vin"] = moto_dict["vin"].upper()
-        
+        if "vin" in moto_dict and moto_dict["vin"]:
+            moto_dict["vin"] = moto_dict["vin"].strip().upper()
         if "placa" in moto_dict and moto_dict["placa"]:
-            moto_dict["placa"] = moto_dict["placa"].upper()
-        
-        # Establecer marca como KTM
-        moto_dict["marca"] = "KTM"
-        
-        # Asignar usuario
+            moto_dict["placa"] = moto_dict["placa"].strip().upper()
         moto_dict["usuario_id"] = usuario_id
-        
         return moto_dict
-    
-    @staticmethod
-    def validate_kilometraje_update(current_km: int, new_km: int) -> tuple[bool, Optional[str]]:
-        """
-        Valida que el nuevo kilometraje sea mayor o igual al actual.
-        
-        Args:
-            current_km: Kilometraje actual
-            new_km: Nuevo kilometraje
-            
-        Returns:
-            Tupla (es_válido, mensaje_error)
-        """
-        if new_km < current_km:
-            return False, "El nuevo kilometraje no puede ser menor al actual"
-        
-        # Validar que no haya un salto sospechoso (más de 100,000 km)
-        diff = new_km - current_km
-        if diff > 100000:
-            return False, "El incremento de kilometraje parece sospechoso (más de 100,000 km)"
-        
-        return True, None
     
     @staticmethod
     def verify_ownership(moto: Moto, usuario_id: int) -> bool:
-        """
-        Verifica que el usuario sea el propietario de la moto.
-        
-        Args:
-            moto: Moto a verificar
-            usuario_id: ID del usuario
-            
-        Returns:
-            True si es propietario, False si no
-        """
         return moto.usuario_id == usuario_id
     
     @staticmethod
-    def calculate_pagination(total: int, page: int, page_size: int) -> dict:
-        """
-        Calcula información de paginación.
-        
-        Args:
-            total: Total de registros
-            page: Página actual
-            page_size: Tamaño de página
-            
-        Returns:
-            Diccionario con información de paginación
-        """
-        total_pages = math.ceil(total / page_size) if page_size > 0 else 0
-        
-        return {
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": total_pages
-        }
+    def evaluar_estado(valor: Decimal, regla: ReglaEstado) -> EstadoSalud:
+        if regla.logica == LogicaRegla.MAYOR_QUE:
+            if regla.limite_critico and valor >= regla.limite_critico:
+                return EstadoSalud.CRITICO
+            elif regla.limite_atencion and valor >= regla.limite_atencion:
+                return EstadoSalud.ATENCION
+            elif regla.limite_bueno and valor >= regla.limite_bueno:
+                return EstadoSalud.BUENO
+            else:
+                return EstadoSalud.EXCELENTE
+        elif regla.logica == LogicaRegla.MENOR_QUE:
+            if regla.limite_critico and valor <= regla.limite_critico:
+                return EstadoSalud.CRITICO
+            elif regla.limite_atencion and valor <= regla.limite_atencion:
+                return EstadoSalud.ATENCION
+            elif regla.limite_bueno and valor <= regla.limite_bueno:
+                return EstadoSalud.BUENO
+            else:
+                return EstadoSalud.EXCELENTE
+        elif regla.logica == LogicaRegla.ENTRE:
+            return EstadoSalud.BUENO
+        return EstadoSalud.BUENO
     
     @staticmethod
-    def build_moto_response(moto: Moto) -> dict:
-        """
-        Construye el diccionario de respuesta para una moto.
-        
-        Args:
-            moto: Moto a convertir
-            
-        Returns:
-            Diccionario con datos de la moto
-        """
-        moto_dict = {
-            "id": moto.id,
-            "usuario_id": moto.usuario_id,
-            "marca": moto.marca,
-            "modelo": moto.modelo,
-            "año": moto.año,
-            "vin": moto.vin,
-            "placa": moto.placa,
-            "color": moto.color,
-            "kilometraje": moto.kilometraje,
-            "observaciones": moto.observaciones,
-            "created_at": moto.created_at,
-            "updated_at": moto.updated_at,
-            "deleted_at": moto.deleted_at,
-            "nombre_completo": moto.nombre_completo,
-            "es_ktm": moto.es_ktm,
+    def calcular_estado_general(estados: List[EstadoActual]) -> EstadoSalud:
+        if not estados:
+            return EstadoSalud.EXCELENTE
+        prioridad = {
+            EstadoSalud.CRITICO: 4,
+            EstadoSalud.ATENCION: 3,
+            EstadoSalud.BUENO: 2,
+            EstadoSalud.EXCELENTE: 1
         }
-        
-        # Incluir información del usuario si está cargado
-        if moto.usuario:
-            moto_dict["usuario"] = {
-                "id": moto.usuario.id,
-                "nombre": moto.usuario.nombre,
-                "apellido": getattr(moto.usuario, "apellido", None),
-                "email": moto.usuario.email
-            }
-        
-        return moto_dict
-
-    # ---------------- Componente helpers ----------------
+        peor_estado = EstadoSalud.EXCELENTE
+        peor_prioridad = 1
+        for estado in estados:
+            p = prioridad.get(estado.estado, 1)
+            if p > peor_prioridad:
+                peor_prioridad = p
+                peor_estado = estado.estado
+        return peor_estado
+    
     @staticmethod
-    def prepare_componente_data(componente_dict: dict, moto_id: int) -> dict:
-        componente_dict["moto_id"] = moto_id
-        return componente_dict
-
+    async def check_servicio_vencido(moto: Moto, kilometraje_anterior: Decimal) -> None:
+        INTERVALO_SERVICIO = Decimal("5000.0")
+        anterior_int = int(kilometraje_anterior // INTERVALO_SERVICIO)
+        actual_int = int(moto.kilometraje_actual // INTERVALO_SERVICIO)
+        if actual_int > anterior_int:
+            await emit_servicio_vencido(
+                moto_id=moto.moto_id,
+                kilometraje_actual=float(moto.kilometraje_actual),
+                tipo_servicio="mantenimiento_programado"
+            )
+    
     @staticmethod
-    def build_componente_response(componente: MotoComponente) -> dict:
-        return {
-            "id": componente.id,
-            "moto_id": componente.moto_id,
-            "tipo": componente.tipo,
-            "nombre": componente.nombre,
-            "component_state": componente.component_state.value if componente.component_state is not None else None,
-            "last_updated": componente.last_updated,
-            "extra_data": componente.extra_data,
-        }
+    async def handle_estado_change(
+        moto_id: int,
+        componente_id: int,
+        estado_anterior: Optional[EstadoSalud],
+        estado_nuevo: EstadoSalud,
+        valor_actual: Decimal
+    ) -> None:
+        if estado_anterior and estado_anterior != estado_nuevo:
+            await emit_estado_cambiado(
+                moto_id=moto_id,
+                componente_id=componente_id,
+                estado_anterior=estado_anterior,
+                estado_nuevo=estado_nuevo
+            )
+        if estado_nuevo == EstadoSalud.CRITICO:
+            await emit_estado_critico_detectado(
+                moto_id=moto_id,
+                componente_id=componente_id,
+                valor_actual=float(valor_actual)
+            )

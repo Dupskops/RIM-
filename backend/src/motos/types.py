@@ -1,18 +1,33 @@
-"""
-Tipos compartidos para el módulo `motos`.
-Contienen TypedDicts simples usados por el repositorio para anotar
-las formas de datos retornadas (no acoplan la capa de datos a Pydantic).
-"""
-from typing import TypedDict, List, Dict
+from typing import TypedDict, Optional
 
 
-class ModeloPopular(TypedDict):
+class MotoDict(TypedDict, total=False):
+    moto_id: int
+    usuario_id: int
+    vin: str
     modelo: str
-    count: int
+    ano: int
+    placa: str
+    color: Optional[str]
+    kilometraje_actual: float
 
 
-class MotoStats(TypedDict):
-    total_motos: int
-    motos_por_año: Dict[int, int]
-    kilometraje_promedio: float
-    modelos_populares: List[ModeloPopular]
+class ComponenteDict(TypedDict):
+    componente_id: int
+    nombre: str
+    descripcion: Optional[str]
+
+
+class ParametroDict(TypedDict):
+    parametro_id: int
+    componente_id: int
+    nombre: str
+    unidad: str
+
+
+class EstadoActualDict(TypedDict):
+    moto_id: int
+    componente_id: int
+    estado: str
+    valor_actual: float
+    ultima_actualizacion: str

@@ -184,3 +184,9 @@ class OllamaException(ExternalServiceException):
     
     def __init__(self, detail: str):
         super().__init__("Ollama", detail)
+
+class ForbiddenError(RIMException):
+    """Excepción para errores de permisos."""
+    
+    def __init__(self, message: str):
+        super().__init__(message, "FORBIDDEN_ERROR")
