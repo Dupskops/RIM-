@@ -1,41 +1,59 @@
-from typing import Optional, List
+from typing import List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from decimal import Decimal
-from .models import Moto, EstadoActual, Componente, Parametro, ReglaEstado, HistorialLectura
 from .schemas import (
     MotoCreateSchema, MotoReadSchema, MotoUpdateSchema,
-    EstadoActualSchema, DiagnosticoGeneralSchema
+    EstadoActualSchema, DiagnosticoGeneralSchema, ModeloMotoSchema
 )
-from .repositories import MotoRepository, EstadoActualRepository
+from .repositories import MotoRepository, EstadoActualRepository, ModeloMotoRepository
 from .services import MotoService
-from .validators import validate_vin, validate_placa, validate_ano, validate_kilometraje
+from .validators import validate_kilometraje, validate_kilometraje_no_disminuye
 from src.shared.exceptions import NotFoundError, ValidationError, ForbiddenError
+
+# Constantes para evitar literales duplicados
+ERROR_MOTO_NOT_FOUND = "Moto no encontrada"
+ERROR_MOTO_FORBIDDEN = "No tienes acceso a esta moto"
+ERROR_MODELO_NOT_FOUND = "Modelo de moto no encontrado"
 
 
 class CreateMotoUseCase:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = MotoRepository(db)
+        self.modelo_repo = ModeloMotoRepository(db)
         self.service = MotoService()
     
     async def execute(self, data: MotoCreateSchema, usuario_id: int) -> MotoReadSchema:
+        # Validaciones de negocio adicionales (Pydantic ya validó formato)
         try:
-            validate_vin(data.vin)
-            validate_placa(data.placa)
-            validate_ano(data.ano)
             if data.kilometraje_actual:
                 validate_kilometraje(Decimal(str(data.kilometraje_actual)))
         except ValueError as e:
             raise ValidationError(str(e))
         
+        # Validar unicidad de VIN
         existing = await self.repo.get_by_vin(data.vin)
         if existing:
             raise ValidationError("Ya existe una moto con ese VIN")
         
+        # Validar que el modelo existe
+        modelo = await self.modelo_repo.get_by_id(data.modelo_moto_id)
+        if not modelo:
+            raise NotFoundError(ERROR_MODELO_NOT_FOUND)
+        
         moto_data = self.service.prepare_moto_data(data.model_dump(), usuario_id)
         moto = await self.repo.create(moto_data)
+        
+        # Provisionar estados iniciales para todos los componentes del modelo
+        await self.service.provision_estados_iniciales(
+            db=self.db,
+            moto_id=moto.id,
+            modelo_moto_id=moto.modelo_moto_id
+        )
+        
+        # Nota: La provisión de sensores se hace desde el módulo 'sensores'
+        # usando SensorTemplates cuando se llama al endpoint de provisión
+        
         return MotoReadSchema.model_validate(moto)
 
 
@@ -48,9 +66,9 @@ class GetMotoUseCase:
     async def execute(self, moto_id: int, usuario_id: int) -> MotoReadSchema:
         moto = await self.repo.get_by_id(moto_id)
         if not moto:
-            raise NotFoundError("Moto no encontrada")
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
         if not self.service.verify_ownership(moto, usuario_id):
-            raise ForbiddenError("No tienes acceso a esta moto")
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         return MotoReadSchema.model_validate(moto)
 
 
@@ -73,21 +91,20 @@ class UpdateMotoUseCase:
     async def execute(self, moto_id: int, data: MotoUpdateSchema, usuario_id: int) -> MotoReadSchema:
         moto = await self.repo.get_by_id(moto_id)
         if not moto:
-            raise NotFoundError("Moto no encontrada")
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
         if not self.service.verify_ownership(moto, usuario_id):
-            raise ForbiddenError("No tienes acceso a esta moto")
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         
-        update_data = data.model_dump(exclude_unset=True)
+        update_data: Dict[str, Any] = data.model_dump(exclude_unset=True)
         
+        # Validaciones de lógica de negocio (Pydantic ya validó formato)
         try:
-            if "placa" in update_data:
-                validate_placa(update_data["placa"])
-            if "ano" in update_data:
-                validate_ano(update_data["ano"])
             if "kilometraje_actual" in update_data:
-                validate_kilometraje(Decimal(str(update_data["kilometraje_actual"])))
-                if update_data["kilometraje_actual"] < moto.kilometraje_actual:
-                    raise ValidationError("El kilometraje no puede disminuir")
+                nuevo_km = Decimal(str(update_data["kilometraje_actual"]))
+                validate_kilometraje(nuevo_km)
+                # Regla de negocio: el kilometraje nunca puede disminuir
+                validate_kilometraje_no_disminuye(nuevo_km, moto.kilometraje_actual)
+                # Verificar si se debe emitir evento de servicio vencido
                 await self.service.check_servicio_vencido(moto, moto.kilometraje_actual)
         except ValueError as e:
             raise ValidationError(str(e))
@@ -110,9 +127,9 @@ class DeleteMotoUseCase:
     async def execute(self, moto_id: int, usuario_id: int) -> None:
         moto = await self.repo.get_by_id(moto_id)
         if not moto:
-            raise NotFoundError("Moto no encontrada")
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
         if not self.service.verify_ownership(moto, usuario_id):
-            raise ForbiddenError("No tienes acceso a esta moto")
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         await self.repo.delete(moto_id)
 
 
@@ -126,9 +143,9 @@ class GetEstadoActualUseCase:
     async def execute(self, moto_id: int, usuario_id: int) -> List[EstadoActualSchema]:
         moto = await self.moto_repo.get_by_id(moto_id)
         if not moto:
-            raise NotFoundError("Moto no encontrada")
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
         if not self.service.verify_ownership(moto, usuario_id):
-            raise ForbiddenError("No tienes acceso a esta moto")
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         
         estados = await self.estado_repo.get_by_moto(moto_id)
         return [EstadoActualSchema.model_validate(e) for e in estados]
@@ -144,26 +161,58 @@ class GetDiagnosticoGeneralUseCase:
     async def execute(self, moto_id: int, usuario_id: int) -> DiagnosticoGeneralSchema:
         moto = await self.moto_repo.get_by_id(moto_id)
         if not moto:
-            raise NotFoundError("Moto no encontrada")
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
         if not self.service.verify_ownership(moto, usuario_id):
-            raise ForbiddenError("No tienes acceso a esta moto")
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         
         estados = await self.estado_repo.get_by_moto(moto_id)
-        estado_general = self.service.calcular_estado_general(estados)
+        estado_general = self.service.calcular_estado_general(list(estados))
         
-        partes_afectadas = [
-            {
-                "componente_id": e.componente_id,
-                "nombre": e.componente.nombre if e.componente else "Desconocido",
-                "estado": e.estado.value,
-                "valor_actual": float(e.valor_actual),
-                "ultima_actualizacion": e.ultima_actualizacion
-            }
+        # Convertir estados a schemas con información del componente
+        estados_schemas = [
+            EstadoActualSchema(
+                id=e.id,  # PK actualizado: estado_actual_id → id
+                moto_id=e.moto_id,
+                componente_id=e.componente_id,
+                componente_nombre=e.componente.nombre if e.componente else "Desconocido",
+                ultimo_valor=e.ultimo_valor,  # Campo actualizado: valor_actual → ultimo_valor
+                estado=e.estado,
+                ultima_actualizacion=e.ultima_actualizacion
+            )
             for e in estados
-            if e.estado.value != "EXCELENTE"
         ]
         
-        return DiagnosticoGeneralSchema(
-            estado_general=estado_general.value,
-            partes_afectadas=partes_afectadas
+        # Obtener última actualización más reciente
+        ultima_actualizacion = max(
+            (e.ultima_actualizacion for e in estados),
+            default=moto.updated_at
         )
+        
+        return DiagnosticoGeneralSchema(
+            moto_id=moto_id,
+            estado_general=estado_general,
+            componentes=estados_schemas,
+            ultima_actualizacion=ultima_actualizacion
+        )
+
+
+class ListModelosDisponiblesUseCase:
+    """
+    Lista los modelos de motos disponibles para registro.
+    
+    Usado en el flujo de onboarding cuando el usuario va a registrar su primera moto.
+    Retorna solo los modelos activos (activo=true).
+    """
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = ModeloMotoRepository(db)
+    
+    async def execute(self) -> List[ModeloMotoSchema]:
+        """
+        Ejecuta el caso de uso.
+        
+        Returns:
+            List[ModeloMotoSchema]: Lista de modelos activos disponibles
+        """
+        modelos = await self.repo.list_activos()
+        return [ModeloMotoSchema.model_validate(m) for m in modelos]

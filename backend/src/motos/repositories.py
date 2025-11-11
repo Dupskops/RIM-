@@ -1,18 +1,76 @@
-from typing import Optional, Sequence
+"""
+Repositorios para el módulo de motos.
+
+Define las clases de acceso a datos (Data Access Layer) usando SQLAlchemy.
+Cada repositorio maneja operaciones CRUD para una entidad específica.
+
+Versión: v2.3 MVP
+"""
+from typing import Optional, Sequence, Dict, Any, List
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import select, func, desc, and_
+from sqlalchemy import select, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from .models import Moto, Componente, Parametro, ReglaEstado, HistorialLectura, EstadoActual, EstadoSalud
+from .models import ModeloMoto, Moto, Componente, ReglaEstado, EstadoActual, EstadoSalud
 
 
-class MotoRepository:
+# ============================================
+# REPOSITORIOS PRINCIPALES
+# ============================================
+
+class ModeloMotoRepository:
+    """
+    Repositorio para gestión de modelos de motos (catálogo).
+    
+    Gestiona la tabla 'modelos_moto' que contiene el catálogo de modelos
+    soportados (KTM 390 Duke 2024, etc.).
+    """
     
     def __init__(self, session: AsyncSession):
         self.session = session
     
-    async def create(self, moto_data: dict) -> Moto:
+    async def get_by_id(self, modelo_id: int) -> Optional[ModeloMoto]:
+        """
+        Obtiene un modelo de moto por su ID.
+        
+        Usado en: CreateMotoUseCase (validar modelo existe)
+        """
+        result = await self.session.execute(
+            select(ModeloMoto).where(ModeloMoto.id == modelo_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def list_activos(self) -> Sequence[ModeloMoto]:
+        """
+        Lista todos los modelos activos disponibles para registro.
+        
+        Usado en: ListModelosDisponiblesUseCase (onboarding)
+        """
+        result = await self.session.execute(
+            select(ModeloMoto)
+            .where(ModeloMoto.activo == True)
+            .order_by(ModeloMoto.marca, ModeloMoto.nombre)
+        )
+        return result.scalars().all()
+
+
+class MotoRepository:
+    """
+    Repositorio para gestión de motos (instancias individuales).
+    
+    Gestiona la tabla 'motos' con operaciones CRUD completas.
+    """
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def create(self, moto_data: Dict[str, Any]) -> Moto:
+        """
+        Crea una nueva moto.
+        
+        Usado en: CreateMotoUseCase
+        """
         moto = Moto(**moto_data)
         self.session.add(moto)
         await self.session.flush()
@@ -20,26 +78,34 @@ class MotoRepository:
         return moto
     
     async def get_by_id(self, moto_id: int, load_relations: bool = False) -> Optional[Moto]:
-        query = select(Moto).where(Moto.moto_id == moto_id)
+        """
+        Obtiene una moto por su ID (PK actualizado: moto_id → id).
+        
+        Args:
+            moto_id: ID de la moto
+            load_relations: Si True, carga usuario y estados_actuales
+            
+        Usado en: Get, Update, Delete, GetEstadoActual, GetDiagnostico UseCase
+        """
+        query = select(Moto).where(Moto.id == moto_id)
         
         if load_relations:
             query = query.options(
                 selectinload(Moto.usuario),
-                selectinload(Moto.estado_actual).selectinload(EstadoActual.componente)
+                selectinload(Moto.estados_actuales).selectinload(EstadoActual.componente)
             )
         
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
     
     async def get_by_vin(self, vin: str) -> Optional[Moto]:
+        """
+        Obtiene una moto por su VIN (Vehicle Identification Number).
+        
+        Usado en: CreateMotoUseCase (validar unicidad VIN)
+        """
         result = await self.session.execute(
             select(Moto).where(Moto.vin == vin)
-        )
-        return result.scalar_one_or_none()
-    
-    async def get_by_placa(self, placa: str) -> Optional[Moto]:
-        result = await self.session.execute(
-            select(Moto).where(Moto.placa == placa)
         )
         return result.scalar_one_or_none()
     
@@ -49,6 +115,16 @@ class MotoRepository:
         skip: int = 0,
         limit: int = 100
     ) -> Sequence[Moto]:
+        """
+        Lista motos con paginación opcional.
+        
+        Args:
+            usuario_id: Filtrar por dueño (None = todas)
+            skip: Offset para paginación
+            limit: Cantidad máxima de resultados
+            
+        Usado en: ListMotosUseCase
+        """
         query = select(Moto)
         
         if usuario_id:
@@ -59,16 +135,12 @@ class MotoRepository:
         result = await self.session.execute(query)
         return result.scalars().all()
     
-    async def count(self, usuario_id: Optional[int] = None) -> int:
-        query = select(func.count(Moto.moto_id))
+    async def update(self, moto_id: int, update_data: Dict[str, Any]) -> Moto:
+        """
+        Actualiza una moto existente.
         
-        if usuario_id:
-            query = query.where(Moto.usuario_id == usuario_id)
-        
-        result = await self.session.execute(query)
-        return result.scalar_one()
-    
-    async def update(self, moto_id: int, update_data: dict) -> Moto:
+        Usado en: UpdateMotoUseCase
+        """
         moto = await self.get_by_id(moto_id)
         if not moto:
             raise ValueError("Moto not found")
@@ -82,6 +154,11 @@ class MotoRepository:
         return moto
     
     async def delete(self, moto_id: int) -> None:
+        """
+        Elimina una moto (soft delete recomendado en producción).
+        
+        Usado en: DeleteMotoUseCase
+        """
         moto = await self.get_by_id(moto_id)
         if moto:
             await self.session.delete(moto)
@@ -89,11 +166,22 @@ class MotoRepository:
 
 
 class EstadoActualRepository:
+    """
+    Repositorio para gestión de estados actuales de componentes.
+    
+    Gestiona la tabla 'estado_actual' que mantiene el estado en tiempo real
+    de cada componente de cada moto.
+    """
     
     def __init__(self, session: AsyncSession):
         self.session = session
     
     async def get_by_moto(self, moto_id: int) -> Sequence[EstadoActual]:
+        """
+        Obtiene todos los estados actuales de una moto (11 componentes).
+        
+        Usado en: GetEstadoActualUseCase, GetDiagnosticoGeneralUseCase
+        """
         result = await self.session.execute(
             select(EstadoActual)
             .options(selectinload(EstadoActual.componente))
@@ -106,6 +194,11 @@ class EstadoActualRepository:
         moto_id: int,
         componente_id: int
     ) -> Optional[EstadoActual]:
+        """
+        Obtiene el estado actual de un componente específico de una moto.
+        
+        Usado en: procesar_lectura_y_actualizar_estado (services.py)
+        """
         result = await self.session.execute(
             select(EstadoActual).where(
                 and_(
@@ -123,6 +216,11 @@ class EstadoActualRepository:
         ultimo_valor: Decimal,
         estado: EstadoSalud
     ) -> EstadoActual:
+        """
+        Crea o actualiza el estado actual de un componente (UPSERT).
+        
+        Usado en: procesar_lectura_y_actualizar_estado (services.py)
+        """
         existing = await self.get_by_componente(moto_id, componente_id)
         
         if existing:
@@ -144,104 +242,71 @@ class EstadoActualRepository:
             await self.session.flush()
             await self.session.refresh(new_estado)
             return new_estado
-
-
-class HistorialLecturaRepository:
     
-    def __init__(self, session: AsyncSession):
-        self.session = session
-    
-    async def create(
-        self,
-        moto_id: int,
-        parametro_id: int,
-        valor: Decimal,
-        timestamp: datetime
-    ) -> HistorialLectura:
-        lectura = HistorialLectura(
-            moto_id=moto_id,
-            parametro_id=parametro_id,
-            valor=valor,
-            timestamp=timestamp
-        )
-        self.session.add(lectura)
+    async def create_bulk(self, estados: List[Dict[str, Any]]) -> None:
+        """
+        Crea múltiples estados actuales en lote (provisión inicial).
+        
+        Usado en: provision_estados_iniciales (services.py)
+        Crea 11 registros al registrar una moto nueva.
+        """
+        for estado_data in estados:
+            estado = EstadoActual(**estado_data)
+            self.session.add(estado)
         await self.session.flush()
-        await self.session.refresh(lectura)
-        return lectura
-    
-    async def get_lecturas_recientes(
-        self,
-        moto_id: int,
-        parametro_id: Optional[int] = None,
-        limit: int = 100
-    ) -> Sequence[HistorialLectura]:
-        query = select(HistorialLectura).where(HistorialLectura.moto_id == moto_id)
-        
-        if parametro_id:
-            query = query.where(HistorialLectura.parametro_id == parametro_id)
-        
-        query = query.order_by(desc(HistorialLectura.timestamp)).limit(limit)
-        
-        result = await self.session.execute(query)
-        return result.scalars().all()
 
 
 class ComponenteRepository:
+    """
+    Repositorio para gestión de componentes (partes de la moto).
+    
+    Gestiona la tabla 'componentes' que define las partes monitoreadas
+    de cada modelo (Motor, Frenos, Neumáticos, etc.).
+    """
     
     def __init__(self, session: AsyncSession):
         self.session = session
     
-    async def get_by_id(self, componente_id: int) -> Optional[Componente]:
+    async def list_by_modelo(self, modelo_moto_id: int) -> Sequence[Componente]:
+        """
+        Lista todos los componentes de un modelo específico (11 para KTM 390 Duke).
+        
+        Usado en: provision_estados_iniciales (services.py)
+        """
         result = await self.session.execute(
-            select(Componente).where(Componente.componente_id == componente_id)
+            select(Componente)
+            .where(Componente.modelo_moto_id == modelo_moto_id)
+            .order_by(Componente.nombre)
         )
-        return result.scalar_one_or_none()
-    
-    async def list(self) -> Sequence[Componente]:
-        result = await self.session.execute(select(Componente))
-        return result.scalars().all()
-
-
-class ParametroRepository:
-    
-    def __init__(self, session: AsyncSession):
-        self.session = session
-    
-    async def get_by_id(self, parametro_id: int) -> Optional[Parametro]:
-        result = await self.session.execute(
-            select(Parametro).where(Parametro.parametro_id == parametro_id)
-        )
-        return result.scalar_one_or_none()
-    
-    async def get_by_nombre(self, nombre: str) -> Optional[Parametro]:
-        result = await self.session.execute(
-            select(Parametro).where(Parametro.nombre == nombre)
-        )
-        return result.scalar_one_or_none()
-    
-    async def list(self) -> Sequence[Parametro]:
-        result = await self.session.execute(select(Parametro))
         return result.scalars().all()
 
 
 class ReglaEstadoRepository:
+    """
+    Repositorio para gestión de reglas de evaluación de estado.
+    
+    Gestiona la tabla 'reglas_estado' que define los umbrales para evaluar
+    si un componente está en estado BUENO, ATENCION o CRITICO.
+    """
     
     def __init__(self, session: AsyncSession):
         self.session = session
-    
-    async def get_by_componente(self, componente_id: int) -> Sequence[ReglaEstado]:
-        result = await self.session.execute(
-            select(ReglaEstado)
-            .options(selectinload(ReglaEstado.parametro))
-            .where(ReglaEstado.componente_id == componente_id)
-        )
-        return result.scalars().all()
     
     async def get_by_componente_parametro(
         self,
         componente_id: int,
         parametro_id: int
     ) -> Optional[ReglaEstado]:
+        """
+        Obtiene una regla específica por componente y parámetro.
+        
+        Ejemplo: Regla de temperatura para Motor
+        - limite_critico: >= 115°C
+        - limite_atencion: >= 105°C
+        - limite_bueno: >= 90°C
+        
+        Usado en: procesar_lectura_y_actualizar_estado (services.py)
+        """
         result = await self.session.execute(
             select(ReglaEstado).where(
                 and_(

@@ -1,43 +1,69 @@
-import re
-from datetime import datetime
+"""
+Validadores de negocio para el módulo de motos.
+
+IMPORTANTE: Las validaciones de formato básico (VIN, placa, etc.) están en schemas.py
+con Pydantic validators. Este archivo contiene solo validaciones de lógica de negocio
+compleja que no pueden expresarse fácilmente en Pydantic.
+
+Versión: v2.3 MVP
+"""
 from decimal import Decimal
 
 
-VIN_PATTERN = re.compile(r'^[A-HJ-NPR-Z0-9]{17}$')
-PLACA_MIN_LENGTH = 3
-ANO_MIN = 1900
-ANO_MAX = datetime.now().year + 1
+# ============================================
+# CONSTANTES DE VALIDACIÓN
+# ============================================
 
+KILOMETRAJE_MAX = Decimal("999999.9")
 
-def validate_vin(vin: str) -> str:
-    if not vin:
-        raise ValueError("El VIN es obligatorio")
-    vin_upper = vin.strip().upper()
-    if len(vin_upper) != 17:
-        raise ValueError("El VIN debe tener exactamente 17 caracteres")
-    if not VIN_PATTERN.match(vin_upper):
-        raise ValueError("El VIN contiene caracteres inválidos (no se permiten I, O, Q)")
-    return vin_upper
-
-
-def validate_placa(placa: str) -> str:
-    if not placa:
-        raise ValueError("La placa es obligatoria")
-    placa_upper = placa.strip().upper()
-    if len(placa_upper) < PLACA_MIN_LENGTH:
-        raise ValueError(f"La placa debe tener al menos {PLACA_MIN_LENGTH} caracteres")
-    return placa_upper
-
-
-def validate_ano(ano: int) -> int:
-    if ano < ANO_MIN or ano > ANO_MAX:
-        raise ValueError(f"El año debe estar entre {ANO_MIN} y {ANO_MAX}")
-    return ano
-
+# ============================================
+# VALIDADORES DE LÓGICA DE NEGOCIO
+# ============================================
 
 def validate_kilometraje(kilometraje: Decimal) -> Decimal:
+    """
+    Valida que el kilometraje esté en rango permitido.
+    
+    Reglas:
+    - No negativo
+    - Máximo 999,999.9 km
+    
+    Args:
+        kilometraje: Valor a validar
+        
+    Returns:
+        Decimal: Kilometraje validado
+        
+    Raises:
+        ValueError: Si el kilometraje está fuera de rango
+    """
     if kilometraje < 0:
         raise ValueError("El kilometraje no puede ser negativo")
-    if kilometraje > Decimal("999999.9"):
-        raise ValueError("El kilometraje excede el límite permitido")
+    if kilometraje > KILOMETRAJE_MAX:
+        raise ValueError(f"El kilometraje excede el límite permitido ({KILOMETRAJE_MAX} km)")
     return kilometraje
+
+
+def validate_kilometraje_no_disminuye(
+    kilometraje_nuevo: Decimal,
+    kilometraje_actual: Decimal
+) -> None:
+    """
+    Valida regla de negocio: el kilometraje nunca puede disminuir.
+    
+    Esta es una validación de lógica de negocio que requiere comparar
+    con el estado actual de la moto en base de datos.
+    
+    Args:
+        kilometraje_nuevo: Nuevo kilometraje a establecer
+        kilometraje_actual: Kilometraje actual en base de datos
+        
+    Raises:
+        ValueError: Si el nuevo kilometraje es menor al actual
+    """
+    if kilometraje_nuevo < kilometraje_actual:
+        raise ValueError(
+            f"El kilometraje no puede disminuir "
+            f"(actual: {kilometraje_actual} km, nuevo: {kilometraje_nuevo} km)"
+        )
+
