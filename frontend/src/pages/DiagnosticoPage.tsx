@@ -1,15 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Droplet, Gauge, Zap, Wrench, Battery, LassoSelect } from "lucide-react";
+import { Droplet, Gauge, Zap, Wrench, Battery } from "lucide-react";
 import PopUp from "../components/pop-up";
 import type { StatusCard as PopStatusCard } from "../components/pop-up";
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import Moto3D from "../components/Moto3D.tsx";
 
 const DiagnosticoPage: React.FC = () => {
   const [started, setStarted] = useState(false);
   const [loading, setLoading] = useState(false);
-  // model loading skeleton control
-  const [modelLoading, setModelLoading] = useState<boolean>(true);
+  // (now using external Moto3D component)
 
   type StatusCard = { id: string; title: string; state: string; colorClass: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -35,15 +33,8 @@ const DiagnosticoPage: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  // Orbit controls ref and helper type
-  type ControlsLike = {
-    autoRotate?: boolean;
-    dollyIn?: (n: number) => void;
-    dollyOut?: (n: number) => void;
-    update?: () => void;
-    object?: { position?: { z?: number } };
-  };
-  const orbitRef = useRef<ControlsLike | null>(null);
+  // Orbit controls ref (not used here but kept for future control hooks)
+  // If unused, keep commented to avoid lint warnings.
 
   const scrollToCard = (id: string | null) => {
     if (!id) return;
@@ -65,6 +56,32 @@ const DiagnosticoPage: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalCard, setModalCard] = useState<StatusCard | PopStatusCard | null>(null);
 
+  // When a 3D marker is selected, try to find the matching status card and open it
+  const handleMarkerSelect = (label: string) => {
+    if (!label) return;
+    // try to find a card that matches the label (case-insensitive, partial match)
+    const found = statusCards.find((c) => {
+      const a = c.title.toLowerCase();
+      const b = label.toLowerCase();
+      return a.includes(b) || b.includes(a) || b.includes(a.split(' ')[0]);
+    });
+
+    if (found) {
+      setSelectedId(found.id);
+      setModalCard(found as StatusCard);
+      setModalOpen(true);
+      if (!started) {
+        handleGenerate();
+      } else if (!loading) {
+        scrollToCard(found.id);
+      }
+    } else {
+      // fallback: just open generic modal
+      setModalCard({ id: 'unknown', title: label, state: 'Desconocido', colorClass: 'bg-gray-400', icon: Zap });
+      setModalOpen(true);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[var(--bg)] px-4 pb-3">
       {/* Header (no back arrow) */}
@@ -77,124 +94,10 @@ const DiagnosticoPage: React.FC = () => {
         <div className="bg-[var(--card)] rounded-lg p-4 flex justify-center h-100">
           <div className="relative w-full max-w-xl">
             {/* 3D canvas: keep same container size so overlay points map correctly */}
-            <div className="w-full h-[360px] rounded-md shadow-md bg-black relative overflow-hidden">
-              <Canvas className="w-full h-full" camera={{ position: [0, 0, 4] }} onCreated={() => setTimeout(() => setModelLoading(false), 350)}>
-                 <ambientLight intensity={0.8} />
-                 <directionalLight position={[5, 5, 5]} intensity={0.6} />
-                 {/* Simple placeholder model (replace with GLTF model via useGLTF) */}
-                 {!modelLoading && (
-                   <mesh rotation={[0.4, 0.7, 0]}>
-                     <torusKnotGeometry args={[0.8, 0.3, 128, 32]} />
-                     <meshStandardMaterial color="#9ca3af" metalness={0.6} roughness={0.2} />
-                   </mesh>
-                 )}
-
-                {/* OrbitControls: ref will be set to orbitRef so DOM buttons can control it */}
-                <OrbitControls ref={(el) => { orbitRef.current = el as unknown as ControlsLike; }} makeDefault enablePan enableZoom enableRotate />
-              </Canvas>
-
-                {/* Controls overlay (rotation toggle + zoom) - will be hooked to OrbitControls when present */}
-                {!modelLoading && (
-                  <div className="absolute right-3 top-3 flex flex-col gap-2 z-20">
-                    <LassoSelect className=" bg-[var(--card)] text-[var(--bg)]/80 p-2 rounded-md shadow w-8 h-8" onClick={() => {
-                      const controls = orbitRef.current;
-                      if (controls) {
-                        controls.autoRotate = !controls.autoRotate;
-                      }
-                    }}/>
-
-                    <div className="flex flex-col bg-[var(--card)] rounded-md p-1 shadow">
-                      <button
-                        type="button"
-                        className="px-2 py-1 text-sm"
-                        onClick={() => {
-                          const controls = orbitRef.current;
-                          if (controls && typeof controls.dollyOut === 'function') {
-                            controls.dollyOut(1.1);
-                            if (controls.update) controls.update();
-                          } else if (controls && controls.object && controls.object.position && typeof controls.object.position.z === 'number') {
-                            controls.object.position.z *= 1.1;
-                          }
-                        }}
-                        title="Zoom +"
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        className="px-2 py-1 text-sm"
-                        onClick={() => {
-                          const controls = orbitRef.current;
-                          if (controls && typeof controls.dollyIn === 'function') {
-                            controls.dollyIn(1.1);
-                            if (controls.update) controls.update();
-                          } else if (controls && controls.object && controls.object.position && typeof controls.object.position.z === 'number') {
-                            controls.object.position.z /= 1.1;
-                          }
-                        }}
-                        title="Zoom -"
-                      >
-                        -
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {modelLoading && (
-                  <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40">
-                    <div className="w-32 h-20 rounded-lg bg-gray-500/10 animate-pulse" aria-hidden />
-                  </div>
-                )}
+              <div className="w-full h-[360px] rounded-md shadow-md bg-black relative overflow-hidden">
+              {/* Moto3D component (loads /models/moto.glb from public/models) */}
+              <Moto3D onMarkerSelect={handleMarkerSelect} />
             </div>
-
-            {/* Colored status points positioned around the bike (percent-based for responsiveness) */}
-            {[
-              { id: 'p1', left: '50%', top: '40%', color: 'green', title: 'Frenos' },
-              { id: 'p2', left: '45%', top: '58%', color: 'blue', title: 'Tanque' },
-              { id: 'p3', left: '64%', top: '38%', color: 'orange', title: 'Motor' },
-              { id: 'p4', left: '18%', top: '60%', color: 'red', title: 'Neumático delantero' },
-              { id: 'p5', left: '28%', top: '55%', color: 'green', title: 'Neumático trasero' },
-              { id: 'p6', left: '72%', top: '60%', color: 'green', title: 'Batería' },
-            ].map((pt, idx) => {
-              const colorClass = pt.color === 'green' ? 'bg-green-500' : pt.color === 'blue' ? 'bg-sky-400' : pt.color === 'orange' ? 'bg-orange-400' : 'bg-red-500';
-              const linkedCard = statusCards[idx];
-
-              const activate = () => {
-                setSelectedId(linkedCard.id);
-                if (!started) {
-                  handleGenerate();
-                } else if (!loading) {
-                  scrollToCard(linkedCard.id);
-                }
-              };
-
-              const onKeyDown = (e: React.KeyboardEvent) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  activate();
-                }
-              };
-
-              return (
-                <div
-                  key={pt.id}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={pt.title}
-                  onClick={activate}
-                  onKeyDown={onKeyDown}
-                  className="absolute rounded-full flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 group cursor-pointer"
-                  style={{ left: pt.left, top: pt.top }}
-                >
-                  <span className={`block w-5 h-5 rounded-full border-2 border-white ${colorClass}`} />
-                  <span className="absolute w-9 h-9 rounded-full opacity-20" style={{ background: 'transparent' }} />
-
-                  {/* Tooltip: visible on hover or focus (accessible) */}
-                  <div className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/80 text-white text-xs px-2 py-1 opacity-0 scale-95 transform transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus:opacity-100" role="tooltip">
-                    {pt.title}
-                  </div>
-                </div>
-              );
-            })}
 
             {/* Legend overlay (bottom-left of image) */}
             <div className="absolute left-4 bottom-4 bg-[rgba(0,0,0,0.5)] text-[var(--color-2)] rounded-md p-3 text-sm">
