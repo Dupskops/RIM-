@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuthStore } from "@/store";
 import { LoginSchema } from "@/lib/validators";
@@ -9,6 +9,7 @@ import { Eye, EyeOff } from "lucide-react";
 const LoginPage = () => {
   const navigate = useNavigate();
   const { login, isLoading } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -50,7 +51,7 @@ const LoginPage = () => {
 
       // Manejar errores del backend
       if (error && typeof error === 'object' && 'response' in error) {
-        const axiosError = error as any;
+        const axiosError = error as { response?: { data?: { detail?: string } } };
         const message = axiosError.response?.data?.detail || "Error al iniciar sesión";
         toast.error(message);
       }
@@ -63,6 +64,11 @@ const LoginPage = () => {
       [e.target.name]: e.target.value,
     }));
   };
+
+  useEffect(() => {
+    const t = setTimeout(() => setMounted(true), 80);
+    return () => clearTimeout(t);
+  }, []);
 
   return (
     <div
@@ -77,13 +83,13 @@ const LoginPage = () => {
     >
       <div className="w-full max-w-md mx-4">
         <div
-          className="rounded-2xl overflow-hidden shadow-2xl border border-white/10"
+          className={`rounded-2xl overflow-hidden shadow-2xl border border-white/10 transform transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-6 scale-95'}`}
           style={{ background: "linear-gradient(180deg, rgba(2,6,8,0.72), rgba(39,63,79,0.85))" }}
         >
           <div className="p-6 sm:p-8">
             <div className="mb-6">
-              <h1 className="text-3xl sm:text-4xl font-extrabold text-white">Iniciar Sesión</h1>
-              <p className="mt-2 text-sm text-[var(--color-2)]">Bienvenido de nuevo, te echábamos de menos.</p>
+              <h1 className="text-3xl sm:text-4xl font-extrabold text-white transition-all duration-700" style={{ transform: mounted ? 'translateY(0)' : 'translateY(-8px)', opacity: mounted ? 1 : 0, transitionDelay: '120ms' }}>Iniciar Sesión</h1>
+              <p className="mt-2 text-sm text-[var(--color-2)] transition-all duration-700" style={{ transform: mounted ? 'translateY(0)' : 'translateY(-6px)', opacity: mounted ? 1 : 0, transitionDelay: '200ms' }}>Bienvenido de nuevo, te echábamos de menos.</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
@@ -151,11 +157,11 @@ const LoginPage = () => {
               </div>
             </form>
 
-            <div className="mt-4 flex items-center justify-between text-sm">
+            <div className="mt-4 flex items-center justify-between text-sm transition-all duration-700" style={{ transform: mounted ? 'translateY(0)' : 'translateY(6px)', opacity: mounted ? 1 : 0, transitionDelay: '260ms' }}>
               <div className="text-[var(--color-2)]">
                 ¿No tienes una cuenta?{' '}
                 <button
-                  onClick={() => navigate({ to: "/register" })}
+                  onClick={() => navigate({ to: "/auth/register" })}
                   type="button"
                   className="text-[var(--accent)] font-semibold"
                 >
