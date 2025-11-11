@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
+import { connectNotificationSocket, disconnectNotificationSocket } from '@/services/notificationSocket';
+import { getAccessToken } from "@/lib/auth-guard";
 
 type NotificationType = 'mantenimiento' | 'diagnostico' | 'otro';
 
@@ -9,7 +11,7 @@ interface NotificationItem {
     title: string;
     body: string;
     date: string; // ISO
-    type: NotificationType;
+    type: NotificationType 
     read?: boolean;
 }
 
@@ -63,12 +65,38 @@ const NotificacionesPage: React.FC = () => {
     const [items, setItems] = useState<NotificationItem[]>(sampleNotifications);
     const [loading, setLoading] = useState<boolean>(false);
 
-    useEffect(() => {
-        // Simular carga de notificaciones (reemplaza por fetch real si corresponde)
-        setLoading(true);
-        const t = setTimeout(() => setLoading(false), 600);
-        return () => clearTimeout(t);
-    }, []);
+useEffect(() => {
+  const token = getAccessToken(); //Obtener el token desde el auth-guard
+
+  if (!token) {
+    console.warn('⚠️ No hay token disponible para conectar al WebSocket');
+    return;
+  }
+
+  const handleNewNotification = (msg: any) => {
+    if (msg.type === 'nueva_notificacion' && msg.data) {
+      const nueva = msg.data;
+      const formateada: NotificationItem = {
+        id: String(nueva.id),
+        title: nueva.titulo,
+        body: nueva.mensaje,
+        date: new Date().toISOString(),
+        type: (nueva.tipo as NotificationType) || 'otro',
+        read: false,
+      };
+
+      setItems((prev) => [formateada, ...prev]); // Añade arriba
+    }
+  };
+
+  const socket = connectNotificationSocket(token, handleNewNotification);
+
+  return () => {
+    disconnectNotificationSocket();
+  };
+}, []);
+
+
 
     const filtered = useMemo(() => {
         if (filter === 'todas') return items;
