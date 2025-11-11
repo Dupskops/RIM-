@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import SensorTemplate, Sensor
-from ..motos.models import Moto, MotoComponente
+from ..motos.models import Moto, Componente
 from ..shared.exceptions import NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ async def validate_moto_exists(session: AsyncSession, moto_id: int) -> Moto:
     
     Args:
         session: Sesión de base de datos
-        moto_id: ID de la moto
+        moto_id: ID de la moto (int PK según DDL v2.3)
         
     Returns:
         Moto encontrada
@@ -42,17 +42,17 @@ async def validate_moto_exists(session: AsyncSession, moto_id: int) -> Moto:
     """
     try:
         result = await session.execute(
-            select(Moto).where(Moto.id == moto_id)
+            select(Moto).where(Moto.id == moto_id)  # CORREGIDO: Moto.id, no moto_id
         )
         moto = result.scalar_one_or_none()
-        
+
         if not moto:
             logger.warning(f"Moto {moto_id} no encontrada")
             raise NotFoundError(f"Moto con ID {moto_id} no encontrada")
-        
-        logger.debug(f"Moto {moto_id} validada: {moto.nombre_completo}")
+
+        logger.debug(f"Moto {moto_id} validada")
         return moto
-        
+
     except NotFoundError:
         raise
     except Exception as e:
@@ -94,13 +94,13 @@ async def validate_template_exists(session: AsyncSession, template_id: UUID) -> 
         raise ValidationError(f"Error al validar template: {str(e)}")
 
 
-async def validate_componente_exists(session: AsyncSession, componente_id: UUID) -> MotoComponente:
+async def validate_componente_exists(session: AsyncSession, componente_id: int) -> Componente:
     """
     Validar que un componente existe.
     
     Args:
         session: Sesión de base de datos
-        componente_id: ID del componente
+        componente_id: ID del componente (int PK según DDL v2.3)
         
     Returns:
         Componente encontrado
@@ -110,17 +110,17 @@ async def validate_componente_exists(session: AsyncSession, componente_id: UUID)
     """
     try:
         result = await session.execute(
-            select(MotoComponente).where(MotoComponente.id == componente_id)
+            select(Componente).where(Componente.id == componente_id)  # CORREGIDO: Componente.id, no componente_id
         )
         componente = result.scalar_one_or_none()
-        
+
         if not componente:
             logger.warning(f"Componente {componente_id} no encontrado")
             raise NotFoundError(f"Componente con ID {componente_id} no encontrado")
-        
-        logger.debug(f"Componente {componente_id} validado: {componente.tipo}")
+
+        logger.debug(f"Componente {componente_id} validado: {componente.nombre}")
         return componente
-        
+
     except NotFoundError:
         raise
     except Exception as e:
@@ -209,36 +209,43 @@ async def validate_sensor_belongs_to_moto(
 
 async def validate_componente_belongs_to_moto(
     session: AsyncSession,
-    componente_id: UUID,
+    componente_id: int,  # CORREGIDO: int, no UUID (según DDL v2.3)
     moto_id: int
 ) -> bool:
     """
     Validar que un componente pertenece a una moto específica.
     
+    NOTA: Componentes son definiciones por modelo (no por moto individual).
+    Esta validación verifica que el componente exista y pertenezca al modelo
+    de la moto especificada.
+    
     Args:
         session: Sesión de base de datos
-        componente_id: ID del componente
-        moto_id: ID de la moto
+        componente_id: ID del componente (int)
+        moto_id: ID de la moto (int)
         
     Returns:
-        True si el componente pertenece a la moto
+        True si el componente es válido para el modelo de la moto
         
     Raises:
-        ValidationError: Si el componente no pertenece a la moto
+        ValidationError: Si el componente no es válido para la moto
     """
     try:
         componente = await validate_componente_exists(session, componente_id)
         
-        if componente.moto_id != moto_id:
+        # Validar que el componente pertenece al modelo de la moto
+        moto = await validate_moto_exists(session, moto_id)
+        
+        if componente.modelo_moto_id != moto.modelo_moto_id:
             logger.warning(
-                f"Componente {componente_id} no pertenece a moto {moto_id} "
-                f"(pertenece a moto {componente.moto_id})"
+                f"Componente {componente_id} no pertenece al modelo de moto {moto_id} "
+                f"(componente.modelo_moto_id={componente.modelo_moto_id}, moto.modelo_moto_id={moto.modelo_moto_id})"
             )
             raise ValidationError(
-                f"Componente {componente_id} no pertenece a la moto especificada"
+                f"Componente {componente_id} no pertenece al modelo de la moto especificada"
             )
         
-        logger.debug(f"Componente {componente_id} validado como perteneciente a moto {moto_id}")
+        logger.debug(f"Componente {componente_id} validado para moto {moto_id}")
         return True
         
     except (NotFoundError, ValidationError):
@@ -272,7 +279,7 @@ def validate_config_schema(config: Dict[str, Any]) -> bool:
         ValidationError: Si el esquema es inválido
     """
     try:
-        if not isinstance(config, dict):
+        if not isinstance(config, dict):  # type: ignore[arg-type]
             raise ValidationError("Config debe ser un diccionario")
         
         # Validar thresholds si existen
@@ -282,11 +289,15 @@ def validate_config_schema(config: Dict[str, Any]) -> bool:
                 raise ValidationError("thresholds debe ser un diccionario")
             
             if "min" in thresholds and "max" in thresholds:
-                min_val = thresholds["min"]
-                max_val = thresholds["max"]
+                # Extraer y validar tipos
+                min_raw = thresholds["min"]
+                max_raw = thresholds["max"]
                 
-                if not isinstance(min_val, (int, float)) or not isinstance(max_val, (int, float)):
+                if not isinstance(min_raw, (int, float)) or not isinstance(max_raw, (int, float)):
                     raise ValidationError("thresholds min/max deben ser números")
+                
+                min_val: float = float(min_raw)
+                max_val: float = float(max_raw)
                 
                 if min_val >= max_val:
                     raise ValidationError("threshold min debe ser menor que max")
@@ -341,7 +352,7 @@ def validate_valor_schema(valor: Dict[str, Any]) -> bool:
         ValidationError: Si el esquema es inválido
     """
     try:
-        if not isinstance(valor, dict):
+        if not isinstance(valor, dict):  # type: ignore[arg-type]
             raise ValidationError("Valor debe ser un diccionario")
         
         # Validar campos requeridos
@@ -397,7 +408,7 @@ def validate_valor_in_range(
         ValidationError: Si los parámetros son inválidos
     """
     try:
-        if not isinstance(valor, (int, float)):
+        if not isinstance(valor, (int, float)):  # type: ignore[arg-type]
             raise ValidationError("Valor debe ser un número")
         
         # Si no hay umbrales, todo es válido
@@ -436,7 +447,7 @@ def validate_valor_in_range(
         else:
             severidad = "critical"
         
-        result = {
+        result: Dict[str, Any] = {
             "in_range": in_range,
             "severidad": severidad,
             "deviation": round(deviation, 2)

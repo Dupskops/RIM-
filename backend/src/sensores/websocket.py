@@ -17,7 +17,7 @@ Autenticación: JWT token via query param o header
 """
 import logging
 import json
-from typing import Dict, Set, Optional
+from typing import Dict, Set, Optional, Any
 from uuid import UUID
 from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query, status
@@ -86,14 +86,14 @@ class ConnectionManager:
                 f"remaining={len(self.active_connections.get(moto_id, []))}"
             )
     
-    async def send_personal_message(self, message: dict, websocket: WebSocket):
+    async def send_personal_message(self, message: Dict[str, Any], websocket: WebSocket):
         """Enviar mensaje a un WebSocket específico."""
         try:
             await websocket.send_json(message)
         except Exception as e:
             logger.error(f"Error enviando mensaje personal: {e}")
     
-    async def broadcast_to_moto(self, message: dict, moto_id: int):
+    async def broadcast_to_moto(self, message: Dict[str, Any], moto_id: int):
         """Broadcast a todos los clientes conectados a una moto."""
         if moto_id not in self.active_connections:
             logger.debug(f"No hay conexiones para moto {moto_id}")
@@ -233,7 +233,7 @@ async def websocket_endpoint(
 # ==================== MESSAGE HANDLERS ====================
 
 async def handle_publish_reading(
-    data: dict,
+    data: Dict[str, Any],
     moto_id: int,
     websocket: WebSocket,
     db: AsyncSession
@@ -252,7 +252,7 @@ async def handle_publish_reading(
         # 1. Validar datos
         sensor_id_str = data.get("sensor_id")
         if not sensor_id_str:
-            raise ValidationError("sensor_id requerido")
+            raise ValidationError("sensor_id es requerido")
         
         sensor_id = UUID(sensor_id_str)
         
@@ -283,28 +283,30 @@ async def handle_publish_reading(
         }, websocket)
         
         # 6. Si la lectura tiene componente, actualizar estado y broadcast
-        if lectura.component_id:
+        if lectura.componente_id:
             try:
                 update_use_case = UpdateComponentStateUseCase(db)
-                state_response = await update_use_case.execute(lectura.component_id)
+                state_response = await update_use_case.execute(
+                    componente_id=lectura.componente_id,
+                    moto_id=lectura.moto_id
+                )
                 await db.commit()
                 
-                # Broadcast solo si el estado cambió
-                if hasattr(state_response, 'changed') and state_response.changed:
-                    await manager.broadcast_to_moto({
-                        "type": "component_state_updated",
-                        "componente_id": str(state_response.componente_id),
-                        "moto_id": state_response.moto_id,
-                        "tipo": state_response.tipo,
-                        "state": state_response.state.value if hasattr(state_response.state, 'value') else str(state_response.state),
-                        "sensor_count": state_response.sensor_count,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }, moto_id)
-                    
-                    logger.info(
-                        f"Estado de componente actualizado y broadcasted: "
-                        f"componente_id={state_response.componente_id}"
-                    )
+                # Broadcast estado actualizado (siempre, no hay campo 'changed')
+                await manager.broadcast_to_moto({
+                    "type": "component_state_updated",
+                    "componente_id": state_response.componente_id,
+                    "moto_id": state_response.moto_id,
+                    "tipo": state_response.tipo,
+                    "component_state": state_response.component_state.value,
+                    "sensor_count": state_response.sensor_count,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }, moto_id)
+                
+                logger.info(
+                    f"Estado de componente actualizado y broadcasted: "
+                    f"componente_id={state_response.componente_id}, state={state_response.component_state.value}"
+                )
             except Exception as e:
                 logger.error(f"Error actualizando estado de componente: {e}")
                 # No fallar la lectura por esto
@@ -339,7 +341,7 @@ async def handle_publish_reading(
 
 # ==================== UTILITY ====================
 
-async def broadcast_alert_to_moto(moto_id: int, alert_data: dict):
+async def broadcast_alert_to_moto(moto_id: int, alert_data: Dict[str, Any]):
     """
     Función helper para broadcast de alertas desde otros módulos.
     

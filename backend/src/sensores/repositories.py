@@ -11,15 +11,16 @@ Incluye logging y manejo robusto de errores.
 """
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from sqlalchemy.exc import SQLAlchemyError
 
 from .models import SensorTemplate, Sensor, Lectura, SensorState
-from ..motos.models import MotoComponente, ComponentState
+from ..motos.models import Componente, EstadoSalud, EstadoActual
 
 logger = logging.getLogger(__name__)
 
@@ -118,65 +119,94 @@ class MotoComponenteRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, componente_data: Dict[str, Any]) -> MotoComponente:
+    async def create(self, componente_data: Dict[str, Any]) -> Componente:
         """Crear nuevo componente."""
-        componente = MotoComponente(**componente_data)
+        componente = Componente(**componente_data)
         self.session.add(componente)
         await self.session.flush()
         await self.session.refresh(componente)
         return componente
 
-    async def get_by_id(self, componente_id: UUID) -> Optional[MotoComponente]:
-        """Obtener componente por ID con sensores asociados."""
+    async def get_by_id(self, componente_id: int) -> Optional[Componente]:
+        """
+        Obtener componente por ID.
+        
+        NOTA: Componentes son definiciones por modelo de moto (no por moto individual).
+        No tienen relación directa con sensores en el modelo v2.3.
+        """
         result = await self.session.execute(
-            select(MotoComponente)
-            .options(selectinload(MotoComponente.sensores))
-            .where(MotoComponente.id == componente_id)
+            select(Componente).where(Componente.id == componente_id)
         )
         return result.scalar_one_or_none()
 
-    async def get_by_moto(self, moto_id: int) -> List[MotoComponente]:
-        """Obtener todos los componentes de una moto."""
+    async def get_by_modelo(self, modelo_moto_id: int) -> List[Componente]:
+        """Obtener todos los componentes de un modelo de moto."""
         result = await self.session.execute(
-            select(MotoComponente)
-            .options(selectinload(MotoComponente.sensores))
-            .where(MotoComponente.moto_id == moto_id)
-            .order_by(MotoComponente.tipo, MotoComponente.nombre)
+            select(Componente)
+            .where(Componente.modelo_moto_id == modelo_moto_id)
+            .order_by(Componente.nombre)
         )
         return list(result.scalars().all())
 
     async def update_state(
         self,
-        componente_id: UUID,
-        new_state: ComponentState,
-        extra_data: Optional[Dict[str, Any]] = None
-    ) -> Optional[MotoComponente]:
-        """Actualizar estado de componente."""
+        moto_id: int,
+        componente_id: int,  # CORREGIDO: componentes.id es SERIAL (int) según DDL v2.3
+        new_state: EstadoSalud,
+        ultimo_valor: Optional[float] = None
+    ) -> Optional[EstadoActual]:
+        """
+        Actualizar estado de componente en estado_actual.
+        
+        Args:
+            moto_id: ID de la moto
+            componente_id: ID del componente
+            new_state: Nuevo estado de salud
+            ultimo_valor: Último valor medido (opcional)
+            
+        Returns:
+            EstadoActual actualizado o None si no existe
+            
+        Note:
+            Esta función actualiza la tabla estado_actual, NO la tabla componentes.
+            El estado es específico por moto-componente (tabla con UNIQUE constraint).
+        """
         try:
-            componente = await self.get_by_id(componente_id)
-            if not componente:
-                logger.warning(f"Componente {componente_id} no encontrado para actualización de estado")
+            # Buscar estado actual existente
+            result = await self.session.execute(
+                select(EstadoActual)
+                .where(
+                    and_(
+                        EstadoActual.moto_id == moto_id,
+                        EstadoActual.componente_id == componente_id
+                    )
+                )
+            )
+            estado_actual = result.scalar_one_or_none()
+            
+            if not estado_actual:
+                logger.warning(f"Estado actual no encontrado para moto_id={moto_id}, componente_id={componente_id}")
                 return None
             
-            componente.component_state = new_state
-            componente.last_updated = datetime.now(timezone.utc)
-            
-            if extra_data:
-                componente.extra_data = extra_data
+            # Actualizar estado
+            estado_actual.estado = new_state
+            estado_actual.ultima_actualizacion = datetime.now(timezone.utc)
+            if ultimo_valor is not None:
+                estado_actual.ultimo_valor = Decimal(str(ultimo_valor))
             
             await self.session.flush()
-            await self.session.refresh(componente)
-            logger.info(f"Estado de componente {componente_id} actualizado a {new_state.value}")
-            return componente
+            await self.session.refresh(estado_actual)
+            logger.info(f"Estado actualizado: moto_id={moto_id}, componente_id={componente_id}, estado={new_state.value}")
+            return estado_actual
             
         except SQLAlchemyError as e:
-            logger.error(f"Error actualizando estado de componente {componente_id}: {e}")
+            logger.error(f"Error actualizando estado: moto_id={moto_id}, componente_id={componente_id}: {e}")
             raise
 
-    async def delete(self, componente_id: UUID) -> bool:
+    async def delete(self, componente_id: int) -> bool:
         """Eliminar componente."""
         result = await self.session.execute(
-            delete(MotoComponente).where(MotoComponente.id == componente_id)
+            delete(Componente).where(Componente.id == componente_id)
         )
         return result.rowcount > 0
 
@@ -231,7 +261,7 @@ class SensorRepository:
         moto_id: Optional[int] = None,
         tipo: Optional[str] = None,
         sensor_state: Optional[SensorState] = None,
-        componente_id: Optional[UUID] = None
+        componente_id: Optional[int] = None  # CORREGIDO: int, no UUID
     ) -> List[Sensor]:
         """Listar sensores con filtros."""
         query = select(Sensor).options(
@@ -239,7 +269,7 @@ class SensorRepository:
             selectinload(Sensor.componente)
         )
         
-        filters = []
+        filters: List[Any] = []
         if moto_id is not None:
             filters.append(Sensor.moto_id == moto_id)
         if tipo:
@@ -267,7 +297,7 @@ class SensorRepository:
         """Contar sensores con filtros."""
         query = select(func.count(Sensor.id))
         
-        filters = []
+        filters: List[Any] = []
         if moto_id is not None:
             filters.append(Sensor.moto_id == moto_id)
         if tipo:
@@ -435,14 +465,14 @@ class LecturaRepository:
 
     async def list_by_component(
         self,
-        component_id: UUID,
+        componente_id: int,  # CORREGIDO: int, no UUID
         skip: int = 0,
         limit: int = 100,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> List[Lectura]:
         """Listar lecturas de un componente con filtros temporales."""
-        query = select(Lectura).where(Lectura.component_id == component_id)
+        query = select(Lectura).where(Lectura.componente_id == componente_id)
         
         if start_date:
             query = query.where(Lectura.ts >= start_date)

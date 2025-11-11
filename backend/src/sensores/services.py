@@ -1,14 +1,31 @@
 """
 Servicios de lógica de negocio para el módulo de sensores.
 
-Contiene la lógica pura de dominio:
-- Provisión automática de sensores basada en templates
-- Cálculo de estados agregados de componentes
-- Verificación de umbrales y generación de alertas
-- Transformaciones y cálculos de negocio
+Contiene la lógica pura de dominio alineada con FLUJOS_SISTEMA.md:
+
+1. **Flujo #2 - Onboarding**: Provisión automática de sensores basada en templates
+    - prepare_sensor_from_template(): Crear sensor desde plantilla
+    - prepare_componente_from_template(): Crear componente desde plantilla
+    - group_templates_by_component(): Agrupar templates por tipo
+
+2. **Flujo #3 - Monitoreo en Tiempo Real**: Validación de calidad de lecturas
+    - validate_reading_quality(): Calcular quality_score basado en estado del sensor
+    - calculate_anomaly_score(): Detectar anomalías estadísticas
+
+3. **Flujo #4 - Detección de Fallas**: Evaluación de reglas y umbrales
+    - check_threshold_violation(): Verificar violaciones y calcular severidad
+    - calculate_component_state(): Agregar estado de componente (MAX algorithm)
+
+4. **Flujo #12 - Pipeline de Telemetría**: Transformaciones y cálculos
+    - Todas las funciones participan en el pipeline de procesamiento
 
 No depende directamente de FastAPI, solo de modelos y tipos.
 Incluye logging exhaustivo y manejo robusto de errores.
+
+Cambios v2.3:
+- componente_id y parametro_id son obligatorios en sensores
+- Ajustado a nuevas FKs (motos.id, componentes.id)
+- Algoritmo MAX para agregación de estados (FLUJO #13)
 """
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -16,7 +33,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from .models import SensorTemplate, Sensor, SensorState
-from ..motos.models import MotoComponente, ComponentState
+from ..motos.models import EstadoSalud
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +45,8 @@ class SensorService:
     def prepare_sensor_from_template(
         template: SensorTemplate,
         moto_id: int,
-        componente_id: Optional[UUID] = None
+        componente_id: int,
+        parametro_id: int
     ) -> Dict[str, Any]:
         """
         Preparar datos de sensor a partir de una plantilla.
@@ -36,20 +54,22 @@ class SensorService:
         Args:
             template: Plantilla de sensor
             moto_id: ID de la moto
-            componente_id: ID del componente (opcional)
+            componente_id: ID del componente (obligatorio en v2.3)
+            parametro_id: ID del parámetro (obligatorio en v2.3)
             
         Returns:
             Diccionario con datos listos para crear sensor
         """
         try:
-            definition = template.definition
+            definition: Dict[str, Any] = template.definition
             
-            sensor_data = {
+            sensor_data: Dict[str, Any] = {
                 "moto_id": moto_id,
                 "template_id": template.id,
                 "nombre": template.name,
                 "tipo": definition.get("sensor_type", "unknown"),
                 "componente_id": componente_id,
+                "parametro_id": parametro_id,
                 "config": {
                     "thresholds": definition.get("default_thresholds", {}),
                     "frequency_ms": definition.get("frequency_ms", 1000),
@@ -85,14 +105,15 @@ class SensorService:
             Diccionario con datos listos para crear componente
         """
         try:
-            definition = template.definition
-            component_type = definition.get("component_type", "unknown")
+            definition: Dict[str, Any] = template.definition
+            component_type: str = definition.get("component_type", "unknown")
             
-            componente_data = {
+            componente_data: Dict[str, Any] = {
                 "moto_id": moto_id,
                 "tipo": component_type,
                 "nombre": f"Componente {component_type}",
-                "component_state": ComponentState.UNKNOWN,
+                # Estado inicial según EstadoSalud enum
+                "estado": EstadoSalud.BUENO,
                 "extra_data": {
                     "sensor_count": 0,
                     "created_from_template": str(template.id)
@@ -114,7 +135,7 @@ class SensorService:
     def calculate_component_state(
         sensores: List[Sensor],
         consider_offline_as_unknown: bool = True
-    ) -> Tuple[ComponentState, Dict[str, Any]]:
+    ) -> Tuple[EstadoSalud, Dict[str, Any]]:
         """
         Calcular estado agregado de un componente basado en sus sensores.
         
@@ -133,7 +154,8 @@ class SensorService:
         try:
             if not sensores:
                 logger.warning("Sin sensores para calcular estado de componente")
-                return ComponentState.UNKNOWN, {
+                # No hay sensores: devolver un estado por defecto (BUENO)
+                return EstadoSalud.BUENO, {
                     "sensor_count": 0,
                     "max_score": 0,
                     "sensor_states": {},
@@ -150,16 +172,16 @@ class SensorService:
             }
             
             # Calcular scores por sensor
-            sensor_scores = []
-            state_counts = {}
-            sensor_contributions = {}
+            sensor_scores: List[int] = []
+            state_counts: Dict[str, int] = {}
+            sensor_contributions: Dict[str, Dict[str, Any]] = {}
             
             for sensor in sensores:
-                score = state_scores.get(sensor.sensor_state, 2)
+                score: int = state_scores.get(sensor.sensor_state, 2)
                 sensor_scores.append(score)
                 
                 # Contar estados
-                state_key = sensor.sensor_state.value
+                state_key: str = sensor.sensor_state.value
                 state_counts[state_key] = state_counts.get(state_key, 0) + 1
                 
                 # Guardar contribución de cada sensor
@@ -170,19 +192,21 @@ class SensorService:
                 }
             
             # Agregar con MAX
-            max_score = max(sensor_scores)
+            max_score: int = max(sensor_scores)
             
             # Mapear a component_state
+            # Mapear scores a EstadoSalud (compatibilidad)
+            component_state: EstadoSalud
             if max_score == 0:
-                component_state = ComponentState.OK
+                component_state = EstadoSalud.EXCELENTE
             elif max_score == 1:
-                component_state = ComponentState.WARNING
+                component_state = EstadoSalud.BUENO
             elif max_score == 2:
-                component_state = ComponentState.MODERATE
+                component_state = EstadoSalud.ATENCION
             else:  # 3+
-                component_state = ComponentState.CRITICAL
+                component_state = EstadoSalud.CRITICO
             
-            aggregation_data = {
+            aggregation_data: Dict[str, Any] = {
                 "sensor_count": len(sensores),
                 "max_score": max_score,
                 "sensor_states": state_counts,
@@ -200,8 +224,8 @@ class SensorService:
             
         except Exception as e:
             logger.error(f"Error calculando estado de componente: {e}")
-            # Retornar UNKNOWN en caso de error
-            return ComponentState.UNKNOWN, {
+            # Retornar BUENO en caso de error
+            return EstadoSalud.BUENO, {
                 "error": str(e),
                 "sensor_count": len(sensores) if sensores else 0
             }
@@ -249,6 +273,7 @@ class SensorService:
                 violated = "max"
             
             # Mapear desviación a severidad
+            severidad: str
             if deviation <= 10:
                 severidad = "low"
             elif deviation <= 25:
@@ -258,7 +283,7 @@ class SensorService:
             else:
                 severidad = "critical"
             
-            alert_data = {
+            alert_data: Dict[str, Any] = {
                 "sensor_id": str(sensor_id),
                 "sensor_tipo": sensor_tipo,
                 "valor_actual": valor,
@@ -300,10 +325,10 @@ class SensorService:
             Diccionario {component_type: [templates]}
         """
         try:
-            grouped = {}
+            grouped: Dict[str, List[SensorTemplate]] = {}
             
             for template in templates:
-                component_type = template.definition.get("component_type", "unknown")
+                component_type: str = template.definition.get("component_type", "unknown")
                 
                 if component_type not in grouped:
                     grouped[component_type] = []
@@ -337,10 +362,11 @@ class SensorService:
             Diccionario con quality_score y metadata
         """
         try:
-            quality_score = 1.0  # Perfecto por defecto
-            quality_factors = []
+            quality_score: float = 1.0  # Perfecto por defecto
+            quality_factors: List[str] = []
             
             # Factor 1: Estado del sensor
+            sensor_factor: float
             if sensor_state == SensorState.OK:
                 sensor_factor = 1.0
             elif sensor_state == SensorState.DEGRADED:
@@ -370,7 +396,7 @@ class SensorService:
                     quality_score *= explicit_quality
                     quality_factors.append(f"explicit_quality_{explicit_quality}")
             
-            result = {
+            result: Dict[str, Any] = {
                 "quality_score": round(quality_score, 3),
                 "quality_factors": quality_factors,
                 "is_reliable": quality_score >= 0.7,
@@ -440,11 +466,11 @@ class SensorService:
             z_score = abs((current_value - mean) / std_dev)
             
             # Normalizar a 0-1
-            anomaly_score = min(z_score / (threshold_multiplier * 2), 1.0)
+            anomaly_score: float = min(z_score / (threshold_multiplier * 2), 1.0)
             
-            is_anomaly = z_score > threshold_multiplier
+            is_anomaly: bool = z_score > threshold_multiplier
             
-            result = {
+            result: Dict[str, Any] = {
                 "anomaly_score": round(anomaly_score, 3),
                 "is_anomaly": is_anomaly,
                 "z_score": round(z_score, 2),

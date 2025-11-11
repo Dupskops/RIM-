@@ -21,9 +21,6 @@ from uuid import UUID
 from src.shared.event_bus import Event
 
 
-from src.shared.event_bus import Event
-
-
 # ==================== EVENT CLASSES ====================
 
 @dataclass
@@ -35,15 +32,13 @@ class SensorRegisteredEvent(Event):
     - Motos: Actualizar contadores de sensores (opcional)
     - Notificaciones: Informar al usuario (opcional)
     """
-    sensor_id: UUID
-    moto_id: int  # FK hacia motos (int)
-    tipo: str
+    sensor_id: UUID = field(kw_only=True)
+    moto_id: int = field(kw_only=True)  # FK hacia motos (int)
+    tipo: str = field(kw_only=True)
     template_id: Optional[UUID] = None
-    componente_id: Optional[UUID] = None
-    timestamp: Optional[datetime] = None
-    
+    componente_id: Optional[int] = None
     correlation_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)  # type: ignore[var-annotated]
 
 
 @dataclass
@@ -55,14 +50,12 @@ class LecturaRegistradaEvent(Event):
     - ML: Inferencia en tiempo real, acumulación de dataset
     - Notificaciones: Broadcast realtime a WebSocket clients (opcional)
     """
-    lectura_id: int
-    moto_id: int  # FK hacia motos (int)
-    sensor_id: UUID
-    component_id: Optional[UUID]
-    ts: datetime
-    valor: Dict[str, Any]  # {"value": X, "unit": "Y"}
-    timestamp: Optional[datetime] = None
-    
+    lectura_id: int = field(kw_only=True)
+    moto_id: int = field(kw_only=True)  # FK hacia motos (int)
+    sensor_id: UUID = field(kw_only=True)
+    componente_id: int = field(kw_only=True)  # CORREGIDO: Ahora requerido
+    ts: datetime = field(kw_only=True)
+    valor: Dict[str, Any] = field(kw_only=True)  # {"value": X, "unit": "Y"}
     correlation_id: Optional[UUID] = None
     metadata: Optional[Dict[str, Any]] = None
 
@@ -81,19 +74,18 @@ class ComponenteEstadoActualizadoEvent(Event):
     - Notificaciones: Alertas push/email según severidad y plan
     - Chatbot: Contexto para respuestas
     """
-    componente_id: UUID
-    moto_id: int  # FK hacia motos (int)
-    tipo_componente: str
-    old_state: str  # ComponentState value
-    new_state: str  # ComponentState value
-    timestamp: Optional[datetime] = None
+    componente_id: int = field(kw_only=True)  # CORREGIDO: componentes.id es SERIAL (int) según DDL v2.3
+    moto_id: int = field(kw_only=True)  # FK hacia motos (int)
+    tipo_componente: str = field(kw_only=True)
+    old_state: str = field(kw_only=True)  # ComponentState value
+    new_state: str = field(kw_only=True)  # ComponentState value
     
     # Datos de agregación (para trazabilidad)
-    aggregation_data: Dict[str, Any] = field(default_factory=dict)  # {"max_score": X, "sensor_states": {...}}
-    sensor_contributions: Dict[UUID, Dict[str, Any]] = field(default_factory=dict)  # {sensor_id: {"state": "ok", "score": 0}}
+    aggregation_data: Dict[str, Any] = field(default_factory=dict)  # type: ignore[var-annotated]
+    sensor_contributions: Dict[UUID, Dict[str, Any]] = field(default_factory=dict)  # type: ignore[var-annotated]
     
     correlation_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)  # type: ignore[var-annotated]
 
 
 @dataclass
@@ -105,19 +97,18 @@ class AlertaSensorEvent(Event):
     - Fallas: Crear falla si severidad >= 'high'
     - Notificaciones: Alerta inmediata a usuario
     """
-    sensor_id: UUID
-    moto_id: int  # FK hacia motos (int)
-    component_id: Optional[UUID]
-    tipo_sensor: str
+    sensor_id: UUID = field(kw_only=True)
+    moto_id: int = field(kw_only=True)  # FK hacia motos (int)
+    componente_id: Optional[int] = field(kw_only=True)
+    tipo_sensor: str = field(kw_only=True)
     
-    valor_actual: Dict[str, Any]  # {"value": X, "unit": "Y"}
-    umbral_violado: Dict[str, Any]  # {"min": A, "max": B}
-    severidad: str  # low, medium, high, critical
-    mensaje: str
-    timestamp: Optional[datetime] = None
+    valor_actual: Dict[str, Any] = field(kw_only=True)  # {"value": X, "unit": "Y"}
+    umbral_violado: Dict[str, Any] = field(kw_only=True)  # {"min": A, "max": B}
+    severidad: str = field(kw_only=True)  # low, medium, high, critical
+    mensaje: str = field(kw_only=True)
     
     correlation_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)  # type: ignore[var-annotated]
 
 
 @dataclass
@@ -135,19 +126,18 @@ class PrediccionGeneradaEvent(Event):
     
     Producido por: ml.use_cases (escucha LecturaRegistradaEvent)
     """
-    moto_id: int  # FK hacia motos (int)
-    sensor_id: Optional[UUID]
-    component_id: Optional[UUID]
+    moto_id: int = field(kw_only=True)  # FK hacia motos (int)
+    sensor_id: Optional[UUID] = field(kw_only=True)
+    componente_id: Optional[int] = field(kw_only=True)
     
-    tipo_prediccion: str  # failure_forecast, degradation, anomaly
-    confianza: float  # 0.0 - 1.0
-    severidad: str  # info, low, medium, high
-    details: Dict[str, Any]  # Detalles específicos de la predicción
+    tipo_prediccion: str = field(kw_only=True)  # failure_forecast, degradation, anomaly
+    confianza: float = field(kw_only=True)  # 0.0 - 1.0
+    severidad: str = field(kw_only=True)  # info, low, medium, high
+    details: Dict[str, Any] = field(kw_only=True)  # Detalles específicos de la predicción
     suggested_action: Optional[str] = None
-    timestamp: Optional[datetime] = None
     
     correlation_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)  # type: ignore[var-annotated]
 
 
 # ==================== EMIT HELPER FUNCTIONS ====================
@@ -157,7 +147,7 @@ async def emit_sensor_registered(
     moto_id: int,
     tipo: str,
     template_id: Optional[UUID] = None,
-    componente_id: Optional[UUID] = None,
+    componente_id: Optional[int] = None,
     correlation_id: Optional[UUID] = None,
     metadata: Optional[Dict[str, Any]] = None
 ) -> None:
@@ -192,7 +182,7 @@ async def emit_lectura_registrada(
     sensor_id: UUID,
     ts: datetime,
     valor: Dict[str, Any],
-    component_id: Optional[UUID] = None,
+    componente_id: int,
     correlation_id: Optional[UUID] = None,
     metadata: Optional[Dict[str, Any]] = None
 ) -> None:
@@ -205,16 +195,15 @@ async def emit_lectura_registrada(
         sensor_id: ID del sensor
         ts: Timestamp de la lectura
         valor: Valor de la lectura (JSONB)
-        component_id: ID del componente (opcional)
+        componente_id: ID del componente (requerido)
         correlation_id: ID de correlación (opcional)
         metadata: Metadata adicional (opcional)
     """
     event = LecturaRegistradaEvent(
-        timestamp=datetime.now(timezone.utc),
         lectura_id=lectura_id,
         moto_id=moto_id,
         sensor_id=sensor_id,
-        component_id=component_id,
+        componente_id=componente_id,
         ts=ts,
         valor=valor,
         correlation_id=correlation_id,
@@ -224,7 +213,7 @@ async def emit_lectura_registrada(
 
 
 async def emit_componente_estado_actualizado(
-    componente_id: UUID,
+    componente_id: int,  # CORREGIDO: componentes.id es SERIAL (int) según DDL v2.3
     moto_id: int,
     tipo_componente: str,
     old_state: str,
@@ -238,7 +227,7 @@ async def emit_componente_estado_actualizado(
     Emite evento de estado de componente actualizado.
     
     Args:
-        componente_id: ID del componente
+        componente_id: ID del componente (int)
         moto_id: ID de la moto
         tipo_componente: Tipo de componente
         old_state: Estado anterior
@@ -271,7 +260,7 @@ async def emit_alerta_sensor(
     umbral_violado: Dict[str, Any],
     severidad: str,
     mensaje: str,
-    component_id: Optional[UUID] = None,
+    componente_id: Optional[int] = None,
     correlation_id: Optional[UUID] = None,
     metadata: Optional[Dict[str, Any]] = None
 ) -> None:
@@ -286,15 +275,14 @@ async def emit_alerta_sensor(
         umbral_violado: Umbral violado (JSONB)
         severidad: Severidad de la alerta
         mensaje: Mensaje de la alerta
-        component_id: ID del componente (opcional)
+        componente_id: ID del componente (opcional)
         correlation_id: ID de correlación (opcional)
         metadata: Metadata adicional (opcional)
     """
     event = AlertaSensorEvent(
-        timestamp=datetime.now(timezone.utc),
         sensor_id=sensor_id,
         moto_id=moto_id,
-        component_id=component_id,
+        componente_id=componente_id,
         tipo_sensor=tipo_sensor,
         valor_actual=valor_actual,
         umbral_violado=umbral_violado,
@@ -313,7 +301,7 @@ async def emit_prediccion_generada(
     severidad: str,
     details: Dict[str, Any],
     sensor_id: Optional[UUID] = None,
-    component_id: Optional[UUID] = None,
+    componente_id: Optional[int] = None,
     suggested_action: Optional[str] = None,
     correlation_id: Optional[UUID] = None,
     metadata: Optional[Dict[str, Any]] = None
@@ -328,7 +316,7 @@ async def emit_prediccion_generada(
         severidad: Severidad (info, low, medium, high)
         details: Detalles de la predicción
         sensor_id: ID del sensor (opcional)
-        component_id: ID del componente (opcional)
+        componente_id: ID del componente (opcional)
         suggested_action: Acción sugerida (opcional)
         correlation_id: ID de correlación (opcional)
         metadata: Metadata adicional (opcional)
@@ -337,7 +325,7 @@ async def emit_prediccion_generada(
         timestamp=datetime.now(timezone.utc),
         moto_id=moto_id,
         sensor_id=sensor_id,
-        component_id=component_id,
+        componente_id=componente_id,
         tipo_prediccion=tipo_prediccion,
         confianza=confianza,
         severidad=severidad,

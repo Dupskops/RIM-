@@ -13,7 +13,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
 
 from .models import SensorState
-from .motos.models import ComponentState
+from ..motos.models import EstadoSalud
 
 
 # ============================================
@@ -89,7 +89,7 @@ class CreateSensorRequest(BaseModel):
     template_id: Optional[UUID] = Field(None, description="Plantilla base (opcional)")
     nombre: Optional[str] = Field(None, max_length=128, description="Nombre descriptivo")
     tipo: str = Field(..., max_length=64, description="Tipo de sensor (temperature, pressure, etc)")
-    componente_id: Optional[UUID] = Field(None, description="Componente físico asociado")
+    componente_id: Optional[int] = Field(None, description="Componente físico asociado (int FK)")  # CORREGIDO: int, no UUID
     config: Dict[str, Any] = Field(
         default_factory=dict,
         description="Configuración personalizada (thresholds, calibration)"
@@ -102,7 +102,7 @@ class CreateSensorRequest(BaseModel):
                 "template_id": "223e4567-e89b-12d3-a456-426614174111",
                 "nombre": "Temp Motor Principal",
                 "tipo": "temperature",
-                "componente_id": "323e4567-e89b-12d3-a456-426614174222",
+                "componente_id": 1,  # int, no UUID
                 "config": {
                     "thresholds": {"min": 20, "max": 100},
                     "calibration_offset": 0.5,
@@ -141,7 +141,7 @@ class SensorRead(BaseModel):
     template_id: Optional[UUID]
     nombre: Optional[str]
     tipo: str
-    componente_id: Optional[UUID]
+    componente_id: Optional[int]  # CORREGIDO: int, no UUID
     config: Dict[str, Any]
     sensor_state: SensorState
     last_value: Optional[Dict[str, Any]]
@@ -194,7 +194,7 @@ class LecturaRead(BaseModel):
     id: int
     moto_id: int
     sensor_id: UUID
-    component_id: Optional[UUID]
+    componente_id: Optional[int]  # CORREGIDO: int, no UUID
     ts: datetime
     valor: Dict[str, Any]
     metadata: Optional[Dict[str, Any]]
@@ -212,14 +212,14 @@ class SensorFilters(BaseModel):
     moto_id: Optional[int] = None
     tipo: Optional[str] = None
     sensor_state: Optional[SensorState] = None
-    componente_id: Optional[UUID] = None
+    componente_id: Optional[int] = None  # CORREGIDO: int, no UUID
 
 
 class LecturaFilters(BaseModel):
     """Filtros para listar lecturas."""
     moto_id: Optional[int] = None
     sensor_id: Optional[UUID] = None
-    component_id: Optional[UUID] = None
+    componente_id: Optional[int] = None  # CORREGIDO: int, no UUID
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
 
@@ -253,11 +253,11 @@ class SensorStatsResponse(BaseModel):
 
 class ComponentStateResponse(BaseModel):
     """Response de estado de componente."""
-    componente_id: UUID
+    componente_id: int  # CORREGIDO: componentes.id es SERIAL (int) según DDL v2.3
     moto_id: int
     tipo: str
     nombre: Optional[str]
-    component_state: ComponentState
+    component_state: EstadoSalud
     sensor_count: int
     last_updated: Optional[datetime]
     aggregation_data: Dict[str, Any]
@@ -266,7 +266,7 @@ class ComponentStateResponse(BaseModel):
         from_attributes=True,
         json_schema_extra={
             "example": {
-                "componente_id": "323e4567-e89b-12d3-a456-426614174222",
+                "componente_id": 1,  # int, no UUID
                 "moto_id": 1,
                 "tipo": "engine",
                 "nombre": "Motor Principal",
