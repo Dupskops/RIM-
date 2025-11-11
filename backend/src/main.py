@@ -54,7 +54,7 @@ async def setup_event_handlers():
     from .ml.events import PrediccionGeneradaEvent, AnomaliaDetectadaEvent
     from .motos.events import KilometrajeUpdatedEvent
     from .auth.events import UserRegisteredEvent, PasswordResetRequestedEvent
-    from .suscripciones.events import SuscripcionUpgradedEvent, SuscripcionExpiredEvent
+    from .suscripciones.events import PlanChangedEvent, SuscripcionCancelledEvent
     from .chatbot.events import LimiteAlcanzadoEvent
     
     logger.info("📡 Registrando event handlers...")
@@ -127,8 +127,8 @@ async def setup_event_handlers():
     # ========================================
     # SUSCRIPCIONES → NOTIFICACIONES
     # ========================================
-    event_bus.subscribe_async(SuscripcionUpgradedEvent, handlers.send_subscription_upgrade_confirmation)
-    event_bus.subscribe_async(SuscripcionExpiredEvent, handlers.send_subscription_expiration_reminder)
+    event_bus.subscribe_async(PlanChangedEvent, handlers.send_subscription_upgrade_confirmation)
+    event_bus.subscribe_async(SuscripcionCancelledEvent, handlers.send_subscription_expiration_reminder)
     logger.info("✅ Suscripciones → Notificaciones (2 handlers)")
     
     # ========================================
