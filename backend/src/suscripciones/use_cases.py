@@ -1,630 +1,417 @@
 """
-Casos de uso del dominio de suscripciones.
+Casos de uso para suscripciones y sistema de límites Freemium v2.3.
 
-Implementa los flujos principales descritos en `docs/USE_CASES.md`:
-- Listar planes
-- Checkout (crear transacción pending)
-- Webhook de pagos (procesar payment_token)
-- Cancelar suscripción
-- Asignar plan desde admin
-- Listar transacciones (historial)
-
-Las implementaciones asumen ciertos métodos en el repository/service; añado
-comentarios donde haya que adaptar nombres si difieren en tu proyecto.
+Implementa la lógica de aplicación que coordina servicios y repositorios
+para exponer funcionalidad a las rutas API.
 """
-from datetime import datetime, timezone, timedelta
-from decimal import Decimal
-from typing import Optional
-from .models import Suscripcion, Plan, EstadoSuscripcion
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import List, Optional, cast
 from sqlalchemy.ext.asyncio import AsyncSession
-import logging
 
-from fastapi import HTTPException, status
-
-from .validators import (
-    calculate_end_date,
-    validate_precio,
-    validate_metodo_pago,
-    validate_checkout_payload,
-    validate_cancel_payload,
-    validate_admin_assign_payload,
-    validate_payment_notification,
-)
+from .models import Caracteristica, UsoCaracteristica
+from .services import LimiteService, SuscripcionService
+from .repositories import PlanesRepository, SuscripcionRepository
 from .schemas import (
-    CheckoutCreateRequest,
-    TransaccionCreateResponse,
-    TransaccionReadSchema,
-    PaymentNotificationSchema,
     PlanReadSchema,
-    SuscripcionUsuarioReadSchema,
-    SuscripcionCancelRequest,
-    AdminAssignSubscriptionRequest,
+    SuscripcionReadSchema,
+    LimiteCheckResponse,
+    LimiteRegistroResponse,
+    CaracteristicaReadSchema,
+    UsoHistorialResponse,
 )
-from .repositories import (
-    SuscripcionRepository,
-    PlanesRepository,
-)
-from .services import SuscripcionService
 
-# Usar la paginación centralizada
-from ..shared.base_models import create_paginated_response
-
-# Eventos (se espera que exista `src/suscripciones/events.py` con estos helpers)
-from .events import (
-    emit_transaccion_creada,
-    emit_transaccion_actualizada,
-    emit_suscripcion_actualizada,
-)
+import logging
 
 logger = logging.getLogger(__name__)
 
 
-class GetMySuscripcionUseCase:
-    """Obtener la suscripción activa del usuario autenticado."""
+def _convert_caracteristica_to_schema(carac: Caracteristica) -> CaracteristicaReadSchema:
+    """Convierte una Caracteristica ORM a CaracteristicaReadSchema.
     
-    async def execute(self, session: AsyncSession, usuario_id: int) -> SuscripcionUsuarioReadSchema:
-        """
-        Obtiene la suscripción más reciente del usuario.
-        
-        Args:
-            session: Sesión de base de datos
-            usuario_id: ID del usuario
-            
-        Returns:
-            SuscripcionUsuarioReadSchema con los datos de la suscripción
-            
-        Raises:
-            HTTPException: Si no se encuentra suscripción
-        """
-        logger.debug("GetMySuscripcionUseCase.execute: usuario_id=%s", usuario_id)
-        
-        try:
-            repo = SuscripcionRepository(session)
-            service = SuscripcionService()
-            
-            suscripcion = await repo.get_by_usuario_id(usuario_id)
-            
-            if not suscripcion:
-                logger.warning("GetMySuscripcionUseCase.execute: no se encontró suscripción para usuario_id=%s", usuario_id)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No se encontró suscripción activa"
-                )
-            
-            # El plan ya está eager-loaded, no causará lazy loading
-            response_data = service.build_suscripcion_response(suscripcion)
-            
-            logger.info("GetMySuscripcionUseCase.execute: suscripción obtenida id=%s", suscripcion.id)
-            
-            return SuscripcionUsuarioReadSchema(**response_data)
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("GetMySuscripcionUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno al obtener suscripción"
-            )
-
-
-class ListSuscripcionesUseCase:
-    """Listar suscripciones con paginación."""
-    
-    async def execute(
-        self,
-        session: AsyncSession,
-        usuario_id: Optional[int],
-        page: int = 1,
-        per_page: int = 20,
-        is_admin: bool = False
-    ) -> dict:
-        """
-        Lista suscripciones del usuario o todas si es admin.
-        
-        Args:
-            session: Sesión de base de datos
-            usuario_id: ID del usuario (None si es admin listando todas)
-            page: Página actual
-            per_page: Elementos por página
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Diccionario con formato PaginatedResponse
-        """
-        logger.debug(
-            "ListSuscripcionesUseCase.execute: usuario_id=%s page=%d per_page=%d is_admin=%s",
-            usuario_id, page, per_page, is_admin
-        )
-        
-        try:
-            repo = SuscripcionRepository(session)
-            service = SuscripcionService()
-            
-            offset = (page - 1) * per_page
-            
-            # Si es admin, puede ver todas; si no, solo las suyas
-            filter_usuario_id = None if is_admin else usuario_id
-            
-            suscripciones, total = await repo.list_by_usuario_id(
-                usuario_id=filter_usuario_id,
-                offset=offset,
-                limit=per_page
-            )
-            
-            # Convertir a schemas
-            items = []
-            for sus in suscripciones:
-                response_data = service.build_suscripcion_response(sus)
-                items.append(SuscripcionUsuarioReadSchema(**response_data))
-            
-            logger.info(
-                "ListSuscripcionesUseCase.execute: retornando %d suscripciones (total=%d)",
-                len(items), total
-            )
-            
-            return create_paginated_response(
-                message="Suscripciones obtenidas exitosamente",
-                data=items,
-                page=page,
-                per_page=per_page,
-                total_items=total
-            )
-            
-        except Exception as e:
-            logger.exception("ListSuscripcionesUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno al listar suscripciones"
-            )
-
-
-class GetSuscripcionByIdUseCase:
-    """Obtener una suscripción específica por ID."""
-    
-    async def execute(
-        self,
-        session: AsyncSession,
-        suscripcion_id: int,
-        current_user_id: int,
-        is_admin: bool = False
-    ) -> SuscripcionUsuarioReadSchema:
-        """
-        Obtiene una suscripción por ID con control de acceso.
-        
-        Args:
-            session: Sesión de base de datos
-            suscripcion_id: ID de la suscripción
-            current_user_id: ID del usuario actual
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            SuscripcionUsuarioReadSchema
-            
-        Raises:
-            HTTPException: Si no se encuentra o no tiene permisos
-        """
-        logger.debug(
-            "GetSuscripcionByIdUseCase.execute: suscripcion_id=%s current_user_id=%s is_admin=%s",
-            suscripcion_id, current_user_id, is_admin
-        )
-        
-        try:
-            repo = SuscripcionRepository(session)
-            service = SuscripcionService()
-            
-            # Obtener con eager loading del plan usando el repositorio
-            suscripcion = await repo.get_by_id(suscripcion_id)
-            
-            if not suscripcion:
-                logger.warning(
-                    "GetSuscripcionByIdUseCase.execute: suscripción no encontrada id=%s",
-                    suscripcion_id
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Suscripción no encontrada"
-                )
-            
-            # Control de acceso
-            if not is_admin and suscripcion.usuario_id != current_user_id:
-                logger.warning(
-                    "GetSuscripcionByIdUseCase.execute: acceso denegado suscripcion_id=%s usuario_id=%s",
-                    suscripcion_id, current_user_id
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="No tiene permisos para acceder a esta suscripción"
-                )
-            
-            # El plan y características ya están cargados con eager loading
-            response_data = service.build_suscripcion_response(suscripcion)
-            
-            logger.info("GetSuscripcionByIdUseCase.execute: suscripción obtenida id=%s", suscripcion_id)
-            
-            return SuscripcionUsuarioReadSchema(**response_data)
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("GetSuscripcionByIdUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno al obtener suscripción"
-            )
+    Helper function para evitar warnings de tipo en comprehensions.
+    """
+    return CaracteristicaReadSchema(
+        id=carac.id,
+        clave_funcion=carac.clave_funcion,
+        descripcion=carac.descripcion,
+        limite_free=carac.limite_free,
+        limite_pro=carac.limite_pro,
+    )
 
 
 class ListPlanesUseCase:
-    """Lista los planes disponibles (`GET /planes`)."""
-    async def execute(self, session: AsyncSession) -> list[PlanReadSchema]:
-        logger.debug("ListPlanesUseCase.execute: iniciando listado de planes")
-        try:
-            planes_repo = PlanesRepository(session)
-            planes = await planes_repo.list_planes()
-            result = []
-            for p in planes:
-                nombre = p.get("nombre_plan") if isinstance(p, dict) else getattr(p, "nombre_plan", None)
-                precio = p.get("precio") if isinstance(p, dict) else getattr(p, "precio", None)
-                periodo = p.get("periodo_facturacion") if isinstance(p, dict) else getattr(p, "periodo_facturacion", None)
-                caracteristicas = p.get("caracteristicas", []) if isinstance(p, dict) else getattr(p, "caracteristicas", [])
-                result.append(
-                    PlanReadSchema(
-                        id=p.get("id") if isinstance(p, dict) else getattr(p, "id", None),
-                        nombre_plan=nombre,
-                        precio=Decimal(str(precio)) if precio is not None else Decimal("0.00"),
-                        periodo_facturacion=periodo or "",
-                        caracteristicas=caracteristicas,
-                    )
-                )
+    """Lista todos los planes disponibles."""
 
-            logger.info("ListPlanesUseCase.execute: obtenido %d planes", len(result))
-            logger.debug("ListPlanesUseCase.execute: planes=%s", result)
-            return result
-        except Exception as e:
-            logger.exception("ListPlanesUseCase.execute: error inesperado al listar planes: %s", e)
-            raise HTTPException(status_code=500, detail="Error interno al listar planes")
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.planes_repo = PlanesRepository(session)
 
-
-class CheckoutCreateUseCase:
-    """Iniciar checkout: crear transacción en estado pending y devolver payment_token."""
-    async def execute(self, session: AsyncSession, request: CheckoutCreateRequest) -> TransaccionCreateResponse:
-        logger.debug("CheckoutCreateUseCase.execute: inicio checkout usuario=%s plan=%s", request.usuario_id, request.plan_id)
-        try:
-            is_valid, error_msg = validate_checkout_payload(request)
-            if not is_valid:
-                logger.warning("CheckoutCreateUseCase.execute: payload inválido: %s", error_msg)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
-
-            repository = SuscripcionRepository(session)
-            service = SuscripcionService()
-
-            plan = await repository.get_plan_by_id(request.plan_id)
-            if not plan:
-                logger.warning("CheckoutCreateUseCase.execute: plan no encontrado id=%s", request.plan_id)
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan no encontrado")
-
-            monto = request.monto
-            if monto is None:
-                monto = getattr(plan, "precio", None)
-                if monto is None:
-                    monto = Decimal("0.00")
-
-            transaccion_data = {
-                "usuario_id": request.usuario_id,
-                "plan_id": request.plan_id,
-                "monto": float(monto) if isinstance(monto, Decimal) else monto,
-                "status": "pending",
-                "provider_metadata": {"simulator": True},
-            }
-
-            transaccion = await repository.create_transaccion(transaccion_data)
-
-            payment_token = "0"
-
-            try:
-                await emit_transaccion_creada(
-                    transaccion_id=getattr(transaccion, "id", None),
-                    usuario_id=getattr(transaccion, "usuario_id", None),
-                    plan_id=getattr(transaccion, "plan_id", None),
-                    monto=str(getattr(transaccion, "monto", monto)),
-                    status=getattr(transaccion, "status", "pending"),
-                    created_at=getattr(transaccion, "created_at", datetime.now(timezone.utc)),
-                )
-            except Exception:
-                # no romper el flujo por fallos en pubsub
-                logger.warning("CheckoutCreateUseCase.execute: fallo emitiendo evento transaccion creada, se ignora")
-
-            logger.info("CheckoutCreateUseCase.execute: transaccion creada id=%s usuario=%s", getattr(transaccion, "id", None), getattr(transaccion, "usuario_id", None))
-            logger.debug("CheckoutCreateUseCase.execute: transaccion_data=%s", transaccion_data)
-
-            return TransaccionCreateResponse(transaccion_id=getattr(transaccion, "id", None), payment_token=payment_token)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("CheckoutCreateUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(status_code=500, detail="Error interno al crear checkout")
-
-
-class ProcessPaymentNotificationUseCase:
-    """Procesar notificación de pago (webhook)."""
-    async def execute(self, session: AsyncSession, payload: PaymentNotificationSchema) -> TransaccionReadSchema:
-        logger.debug("ProcessPaymentNotificationUseCase.execute: procesando payload=%s", payload)
-        try:
-            is_valid, error_msg = validate_payment_notification(payload)
-            if not is_valid:
-                logger.warning("ProcessPaymentNotificationUseCase.execute: payload inválido: %s", error_msg)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
-
-            repository = SuscripcionRepository(session)
-            service = SuscripcionService()
-
-            transaccion_id = payload.transaccion_id
-            transaccion = await repository.get_transaccion_by_id(transaccion_id)
-            if not transaccion:
-                logger.warning("ProcessPaymentNotificationUseCase.execute: transacción no encontrada id=%s", transaccion_id)
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transacción no encontrada")
-
-            if getattr(transaccion, "status", None) in {"success", "failed"}:
-                logger.info("ProcessPaymentNotificationUseCase.execute: transacción ya procesada id=%s status=%s", transaccion_id, transaccion.status)
-                return TransaccionReadSchema(
-                    transaccion_id=transaccion.id,
-                    usuario_id=transaccion.usuario_id,
-                    plan_id=transaccion.plan_id,
-                    monto=Decimal(str(transaccion.monto)),
-                    status=transaccion.status,
-                    provider_metadata=transaccion.provider_metadata,
-                    created_at=transaccion.created_at,
-                    updated_at=getattr(transaccion, "updated_at", None),
-                )
-
-            token = payload.payment_token
-            success = True if token == "0" else False
-            new_status = "success" if success else "failed"
-
-            updated = await repository.update_transaccion(transaccion_id, {"status": new_status, "provider_metadata": payload.metadata or {}})
-
-            try:
-                await emit_transaccion_actualizada(
-                    transaccion_id=updated.id,
-                    status=updated.status,
-                    provider_metadata=updated.provider_metadata,
-                    updated_at=getattr(updated, "updated_at", datetime.now(timezone.utc)),
-                )
-            except Exception:
-                logger.warning("ProcessPaymentNotificationUseCase.execute: fallo emitiendo evento transaccion actualizada, se ignora")
-
-            if success:
-                try:
-                    # delegar comportamiento al service si existe (async)
-                    if hasattr(service, "apply_successful_payment"):
-                        sus = await service.apply_successful_payment(updated, repository)
-                    else:
-                        sus = None
-
-                    try:
-                        if sus is not None:
-                            await emit_suscripcion_actualizada(
-                                suscripcion_id=getattr(sus, "id", None),
-                                usuario_id=getattr(sus, "usuario_id", None),
-                                plan_anterior=getattr(sus, "plan_anterior", None),
-                                plan_nuevo=getattr(sus, "plan", None),
-                                fecha_inicio=getattr(sus, "fecha_inicio", None),
-                                fecha_fin=getattr(sus, "fecha_fin", None),
-                                transaccion_id=updated.id,
-                            )
-                    except Exception:
-                        logger.warning("ProcessPaymentNotificationUseCase.execute: fallo emitiendo evento suscripcion actualizada, se ignora")
-                except Exception as e:
-                    # No fallar el webhook por errores no críticos
-                    logger.error("ProcessPaymentNotificationUseCase.execute: error aplicando pago exitoso: %s", e)
-
-            logger.info("ProcessPaymentNotificationUseCase.execute: transaccion procesada id=%s status=%s", updated.id, updated.status)
-
-            return TransaccionReadSchema(
-                transaccion_id=updated.id,
-                usuario_id=updated.usuario_id,
-                plan_id=updated.plan_id,
-                monto=Decimal(str(updated.monto)),
-                status=updated.status,
-                provider_metadata=updated.provider_metadata,
-                created_at=updated.created_at,
-                updated_at=getattr(updated, "updated_at", None),
+    async def execute(self) -> List[PlanReadSchema]:
+        """Retorna lista de planes con sus características.
+        
+        Returns:
+            Lista de PlanReadSchema con información completa
+        """
+        logger.debug("ListPlanesUseCase.execute")
+        
+        planes = await self.planes_repo.list_planes()
+        
+        result: List[PlanReadSchema] = []
+        for plan in planes:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            
+            # SQLAlchemy relationships no tienen type hints completos
+            for c in (plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_schema = PlanReadSchema(
+                id=plan.id,
+                nombre_plan=plan.nombre_plan,
+                precio=plan.precio,
+                periodo_facturacion=plan.periodo_facturacion.value if plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
             )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("ProcessPaymentNotificationUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(status_code=500, detail="Error interno procesando notificación de pago")
+            result.append(plan_schema)
+        
+        return result
+
+
+class GetMySuscripcionUseCase:
+    """Obtiene la suscripción actual del usuario."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.suscripcion_repo = SuscripcionRepository(session)
+
+    async def execute(self, usuario_id: int) -> Optional[SuscripcionReadSchema]:
+        """Retorna la suscripción activa del usuario.
+        
+        Args:
+            usuario_id: ID del usuario
+            
+        Returns:
+            SuscripcionReadSchema o None si no tiene suscripción
+        """
+        logger.debug("GetMySuscripcionUseCase.execute: usuario_id=%s", usuario_id)
+        
+        suscripcion = await self.suscripcion_repo.get_by_usuario_id(usuario_id)
+        
+        if not suscripcion:
+            return None
+        
+        # Eager loading ya debería estar hecho en el repo
+        plan_data = None
+        if suscripcion.plan:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            for c in (suscripcion.plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_data = PlanReadSchema(
+                id=suscripcion.plan.id,
+                nombre_plan=suscripcion.plan.nombre_plan,
+                precio=suscripcion.plan.precio,
+                periodo_facturacion=suscripcion.plan.periodo_facturacion.value if suscripcion.plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
+            )
+        
+        return SuscripcionReadSchema(
+            id=suscripcion.id,
+            usuario_id=suscripcion.usuario_id,
+            plan=plan_data,
+            fecha_inicio=suscripcion.fecha_inicio,
+            fecha_fin=suscripcion.fecha_fin,
+            estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
+        )
+
+
+class CheckLimiteUseCase:
+    """Verifica si el usuario puede usar una característica."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.limite_service = LimiteService(session)
+
+    async def execute(
+        self, 
+        usuario_id: int, 
+        clave_caracteristica: str
+    ) -> LimiteCheckResponse:
+        """Verifica límite de una característica.
+        
+        Args:
+            usuario_id: ID del usuario
+            clave_caracteristica: Clave de la característica (ej: 'CHATBOT', 'ML_PREDICTIONS')
+            
+        Returns:
+            LimiteCheckResponse con estado del límite
+        """
+        logger.debug(
+            "CheckLimiteUseCase.execute: usuario_id=%s caracteristica=%s",
+            usuario_id, clave_caracteristica
+        )
+        
+        result = await self.limite_service.check_limite(usuario_id, clave_caracteristica)
+        
+        return LimiteCheckResponse(
+            puede_usar=result["puede_usar"],
+            usos_realizados=result["usos_realizados"],
+            limite=result["limite"],
+            usos_restantes=result.get("usos_restantes"),
+            mensaje=result["mensaje"],
+            periodo_actual=result["periodo_actual"],
+        )
+
+
+class RegistrarUsoUseCase:
+    """Registra el uso de una característica."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.limite_service = LimiteService(session)
+
+    async def execute(
+        self, 
+        usuario_id: int, 
+        clave_caracteristica: str
+    ) -> LimiteRegistroResponse:
+        """Registra un uso y actualiza el contador.
+        
+        Args:
+            usuario_id: ID del usuario
+            clave_caracteristica: Clave de la característica
+            
+        Returns:
+            LimiteRegistroResponse con resultado del registro
+        """
+        logger.debug(
+            "RegistrarUsoUseCase.execute: usuario_id=%s caracteristica=%s",
+            usuario_id, clave_caracteristica
+        )
+        
+        result = await self.limite_service.registrar_uso(usuario_id, clave_caracteristica)
+        
+        return LimiteRegistroResponse(
+            exito=result["exito"],
+            usos_realizados=result["usos_realizados"],
+            limite=result["limite"],
+            usos_restantes=result.get("usos_restantes"),
+            mensaje=result["mensaje"],
+        )
+
+
+class GetHistorialUsoUseCase:
+    """Obtiene el historial de uso de características del usuario."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def execute(self, usuario_id: int) -> List[UsoHistorialResponse]:
+        """Retorna historial de uso del mes actual.
+        
+        Args:
+            usuario_id: ID del usuario
+            
+        Returns:
+            Lista de UsoHistorialResponse con uso por característica
+        """
+        logger.debug("GetHistorialUsoUseCase.execute: usuario_id=%s", usuario_id)
+        
+        from sqlalchemy import select, and_
+        from datetime import date
+        
+        periodo_actual = date.today().replace(day=1)
+        
+        # Consultar uso del mes actual
+        stmt = (
+            select(UsoCaracteristica)
+            .where(
+                and_(
+                    UsoCaracteristica.usuario_id == usuario_id,
+                    UsoCaracteristica.periodo_mes == periodo_actual,
+                    UsoCaracteristica.deleted_at.is_(None)
+                )
+            )
+        )
+        
+        result = await self.session.execute(stmt)
+        usos = result.scalars().all()
+        
+        # Obtener características con eager loading
+        if not usos:
+            return []
+        
+        # Cargar características
+        caracteristica_ids = [uso.caracteristica_id for uso in usos]
+        stmt_carac = select(Caracteristica).where(
+            Caracteristica.id.in_(caracteristica_ids)
+        )
+        result_carac = await self.session.execute(stmt_carac)
+        caracteristicas = {c.id: c for c in result_carac.scalars().all()}
+        
+        return [
+            UsoHistorialResponse(
+                caracteristica=caracteristicas[uso.caracteristica_id].clave_funcion,
+                usos_realizados=uso.usos_realizados,
+                limite_mensual=uso.limite_mensual,
+                ultimo_uso_at=uso.ultimo_uso_at,
+                periodo_mes=uso.periodo_mes,
+            )
+            for uso in usos
+            if uso.caracteristica_id in caracteristicas
+        ]
+
+
+class CambiarPlanUseCase:
+    """Cambia el plan de un usuario (genérico para cualquier plan)."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.suscripcion_service = SuscripcionService(session)
+        self.planes_repo = PlanesRepository(session)
+
+    async def execute(
+        self, 
+        usuario_id: int, 
+        nuevo_plan_id: int
+    ) -> SuscripcionReadSchema:
+        """Cambia el plan del usuario.
+        
+        Args:
+            usuario_id: ID del usuario
+            nuevo_plan_id: ID del plan destino
+            
+        Returns:
+            SuscripcionReadSchema actualizada
+            
+        Raises:
+            ValueError: Si el plan no existe o el usuario ya lo tiene
+        """
+        logger.info(
+            "CambiarPlanUseCase.execute: usuario_id=%s nuevo_plan_id=%s",
+            usuario_id, nuevo_plan_id
+        )
+        
+        # Usar el servicio genérico
+        suscripcion = await self.suscripcion_service.cambiar_plan(
+            usuario_id, nuevo_plan_id
+        )
+        
+        # Cargar plan con eager loading
+        plan = await self.planes_repo.get_plan_by_id(suscripcion.plan_id)
+        
+        plan_data = None
+        if plan:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            for c in (plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_data = PlanReadSchema(
+                id=plan.id,
+                nombre_plan=plan.nombre_plan,
+                precio=plan.precio,
+                periodo_facturacion=plan.periodo_facturacion.value if plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
+            )
+        
+        return SuscripcionReadSchema(
+            id=suscripcion.id,
+            usuario_id=suscripcion.usuario_id,
+            plan=plan_data,
+            fecha_inicio=suscripcion.fecha_inicio,
+            fecha_fin=suscripcion.fecha_fin,
+            estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
+        )
 
 
 class CancelSuscripcionUseCase:
-    """Cancelar una suscripción activa."""
-    async def execute(self, session: AsyncSession, usuario_id: int, suscripcion_id: int, request: SuscripcionCancelRequest) -> SuscripcionUsuarioReadSchema:
-        logger.debug("CancelSuscripcionUseCase.execute: usuario=%s suscripcion=%s modo=%s", usuario_id, suscripcion_id, getattr(request, 'mode', None))
-        try:
-            is_valid, err = validate_cancel_payload(request)
-            if not is_valid:
-                logger.warning("CancelSuscripcionUseCase.execute: payload inválido: %s", err)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+    """Cancela la suscripción activa del usuario."""
 
-            repository = SuscripcionRepository(session)
-            service = SuscripcionService()
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.suscripcion_repo = SuscripcionRepository(session)
 
-            sus = await repository.get_by_id(suscripcion_id)
-            if not sus:
-                logger.warning("CancelSuscripcionUseCase.execute: suscripción no encontrada id=%s", suscripcion_id)
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suscripción no encontrada")
-
-            if sus.usuario_id != usuario_id:
-                logger.warning("CancelSuscripcionUseCase.execute: intento de cancelación sin permiso usuario=%s suscripcion=%s", usuario_id, suscripcion_id)
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para cancelar esta suscripción")
-
-            if hasattr(service, "can_cancel"):
-                can_cancel, reason = service.can_cancel(sus)
-                if not can_cancel:
-                    logger.info("CancelSuscripcionUseCase.execute: cancelación no permitida por service: %s", reason)
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason or "No se puede cancelar")
-
-            # Buscar plan FREE para hacer downgrade
-            from sqlalchemy import select, func
-            stmt = select(Plan).where(func.upper(Plan.nombre_plan) == "FREE")
-            result = await session.execute(stmt)
-            plan_free = result.scalars().first()
+    async def execute(self, usuario_id: int) -> SuscripcionReadSchema:
+        """Cancela la suscripción y la pasa a plan Free.
+        
+        Args:
+            usuario_id: ID del usuario
             
-            if not plan_free:
-                logger.error("CancelSuscripcionUseCase.execute: Plan FREE no encontrado en BD")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Error: Plan FREE no encontrado. Contacta al administrador."
-                )
-
-            if request.mode == "immediate":
-                # Downgrade inmediato a FREE
-                logger.info("CancelSuscripcionUseCase.execute: Downgrade inmediato a FREE para usuario=%s", usuario_id)
-                
-                updated = await repository.assign_plan_to_user(
-                    usuario_id=usuario_id,
-                    plan_id=plan_free.id,
-                    fecha_inicio=datetime.now(timezone.utc),
-                    fecha_fin=None  # FREE no tiene fecha de fin
-                )
-                
-                # Marcar como cancelada la anterior
-                # (assign_plan_to_user ya crea/actualiza la suscripción)
-            else:
-                # Para end_of_period, marcar para cancelar al final del periodo
-                # pero mantener PREMIUM hasta que llegue la fecha_fin
-                update_data = {}
-                if not sus.fecha_fin:
-                    # Si no tiene fecha_fin, calcular una (ej: 30 días desde ahora)
-                    update_data["fecha_fin"] = datetime.now(timezone.utc) + timedelta(days=30)
-                # No cambiar el estado ni el plan aún, solo marcar la fecha de fin
-                
-                updated = await repository.update(sus, update_data)
-                logger.info("CancelSuscripcionUseCase.execute: Cancelación programada para fecha_fin=%s", updated.fecha_fin)
-
-            try:
-                await emit_suscripcion_actualizada(
-                    suscripcion_id=getattr(updated, "id", None),
-                    usuario_id=getattr(updated, "usuario_id", None),
-                    plan_anterior=getattr(updated, "plan_anterior", None),
-                    plan_nuevo=getattr(updated, "plan", None),
-                    fecha_inicio=getattr(updated, "fecha_inicio", None),
-                    fecha_fin=getattr(updated, "fecha_fin", None),
-                    transaccion_id=None,
-                )
-            except Exception:
-                logger.warning("CancelSuscripcionUseCase.execute: fallo emitiendo evento suscripcion actualizada, se ignora")
-
-            if hasattr(service, "build_suscripcion_response"):
-                sus_dict = service.build_suscripcion_response(updated)
-                logger.info("CancelSuscripcionUseCase.execute: suscripción actualizada id=%s", getattr(updated, "id", None))
-                return SuscripcionUsuarioReadSchema(**sus_dict)
-
-            logger.info("CancelSuscripcionUseCase.execute: suscripción actualizada id=%s", getattr(updated, "id", None))
-            return SuscripcionUsuarioReadSchema(
-                suscripcion_id=getattr(updated, "id", None),
-                plan=getattr(updated, "plan", None),
-                estado_suscripcion=getattr(updated, "estado_suscripcion", None),
-                fecha_inicio=getattr(updated, "fecha_inicio", None),
-                fecha_fin=getattr(updated, "fecha_fin", None),
+        Returns:
+            SuscripcionReadSchema actualizada
+            
+        Raises:
+            ValueError: Si no tiene suscripción activa
+        """
+        logger.info("CancelSuscripcionUseCase.execute: usuario_id=%s", usuario_id)
+        
+        from .models import EstadoSuscripcion
+        from .repositories import PlanesRepository
+        
+        # Obtener suscripción actual
+        suscripcion = await self.suscripcion_repo.get_by_usuario_id(usuario_id)
+        
+        if not suscripcion:
+            raise ValueError("Usuario no tiene suscripción activa")
+        
+        if suscripcion.estado_suscripcion == EstadoSuscripcion.CANCELADA:
+            raise ValueError("La suscripción ya está cancelada")
+        
+        # Buscar plan Free
+        planes_repo = PlanesRepository(self.session)
+        plan_free = await planes_repo.get_plan_by_nombre("FREE")
+        
+        if not plan_free:
+            raise ValueError("Plan Free no encontrado")
+        
+        # Actualizar a Free y marcar como cancelada
+        suscripcion.plan_id = plan_free.id
+        suscripcion.estado_suscripcion = EstadoSuscripcion.CANCELADA
+        suscripcion.fecha_fin = datetime.now(timezone.utc)
+        
+        await self.session.commit()
+        await self.session.refresh(suscripcion)
+        
+        logger.info("CancelSuscripcionUseCase: Suscripción cancelada usuario_id=%s", usuario_id)
+        
+        # Cargar plan con eager loading
+        plan = await planes_repo.get_plan_by_id(suscripcion.plan_id)
+        
+        plan_data = None
+        if plan:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            for c in (plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_data = PlanReadSchema(
+                id=plan.id,
+                nombre_plan=plan.nombre_plan,
+                precio=plan.precio,
+                periodo_facturacion=plan.periodo_facturacion.value if plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
             )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("CancelSuscripcionUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(status_code=500, detail="Error interno al cancelar suscripción")
+        
+        return SuscripcionReadSchema(
+            id=suscripcion.id,
+            usuario_id=suscripcion.usuario_id,
+            plan=plan_data,
+            fecha_inicio=suscripcion.fecha_inicio,
+            fecha_fin=suscripcion.fecha_fin,
+            estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
+        )
 
 
-class AdminAssignSubscriptionUseCase:
-    """Asignar un plan manualmente desde admin."""
-    async def execute(self, session: AsyncSession, request: AdminAssignSubscriptionRequest) -> SuscripcionUsuarioReadSchema:
-        logger.debug("AdminAssignSubscriptionUseCase.execute: asignando plan admin usuario=%s plan=%s", request.usuario_id, request.plan_id)
-        try:
-            is_valid, err = validate_admin_assign_payload(request)
-            if not is_valid:
-                logger.warning("AdminAssignSubscriptionUseCase.execute: payload inválido: %s", err)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
-
-            repository = SuscripcionRepository(session)
-            service = SuscripcionService()
-
-            assigned = await repository.assign_plan_to_user(
-                usuario_id=request.usuario_id,
-                plan_id=request.plan_id,
-                fecha_inicio=request.fecha_inicio,
-                fecha_fin=request.fecha_fin,
-            )
-
-            try:
-                await emit_suscripcion_actualizada(
-                    suscripcion_id=getattr(assigned, "id", None),
-                    usuario_id=getattr(assigned, "usuario_id", None),
-                    plan_anterior=getattr(assigned, "plan_anterior", None),
-                    plan_nuevo=getattr(assigned, "plan", None),
-                    fecha_inicio=getattr(assigned, "fecha_inicio", None),
-                    fecha_fin=getattr(assigned, "fecha_fin", None),
-                    transaccion_id=None,
-                )
-            except Exception:
-                logger.warning("AdminAssignSubscriptionUseCase.execute: fallo emitiendo evento suscripcion actualizada, se ignora")
-
-            if hasattr(service, "build_suscripcion_response"):
-                resp = service.build_suscripcion_response(assigned)
-                logger.info("AdminAssignSubscriptionUseCase.execute: asignación completada id=%s usuario=%s", getattr(assigned, "id", None), getattr(assigned, "usuario_id", None))
-                return SuscripcionUsuarioReadSchema(**resp)
-
-            logger.info("AdminAssignSubscriptionUseCase.execute: asignación completada id=%s usuario=%s", getattr(assigned, "id", None), getattr(assigned, "usuario_id", None))
-            return SuscripcionUsuarioReadSchema(
-                suscripcion_id=getattr(assigned, "id", None),
-                plan=getattr(assigned, "plan", None),
-                estado_suscripcion=getattr(assigned, "estado_suscripcion", None),
-                fecha_inicio=getattr(assigned, "fecha_inicio", None),
-                fecha_fin=getattr(assigned, "fecha_fin", None),
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("AdminAssignSubscriptionUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(status_code=500, detail="Error interno asignando suscripción")
-
-
-class TransaccionListUseCase:
-    """Listar transacciones de un usuario (`GET /usuarios/{id}/transacciones`)."""
-
-    async def execute(self, session: AsyncSession, usuario_id: int, page: int = 1, per_page: int = 20, is_admin: bool = False) -> dict:
-        logger.debug("TransaccionListUseCase.execute: usuario=%s page=%d per_page=%d is_admin=%s", usuario_id, page, per_page, is_admin)
-        try:
-            offset = (page - 1) * per_page
-            repository = SuscripcionRepository(session)
-            items = await repository.list_transacciones(usuario_id=usuario_id if not is_admin else None, offset=offset, limit=per_page)
-            total = await repository.count_transacciones(usuario_id=usuario_id if not is_admin else None)
-
-            parsed = []
-            for t in items:
-                parsed.append(
-                    TransaccionReadSchema(
-                        transaccion_id=getattr(t, "id", None),
-                        usuario_id=getattr(t, "usuario_id", None),
-                        plan_id=getattr(t, "plan_id", None),
-                        monto=Decimal(str(getattr(t, "monto", 0))),
-                        status=getattr(t, "status", None),
-                        provider_metadata=getattr(t, "provider_metadata", None),
-                        created_at=getattr(t, "created_at", None),
-                        updated_at=getattr(t, "updated_at", None),
-                    )
-                )
-
-            logger.info("TransaccionListUseCase.execute: retornando %d transacciones (total=%d)", len(parsed), total)
-            logger.debug("TransaccionListUseCase.execute: transacciones=%s", parsed)
-
-            return create_paginated_response(
-                message="Transacciones obtenidas",
-                data=parsed,
-                page=page,
-                per_page=per_page,
-                total_items=total,
-            )
-        except Exception as e:
-            logger.exception("TransaccionListUseCase.execute: error inesperado: %s", e)
-            raise HTTPException(status_code=500, detail="Error interno obteniendo transacciones")
+__all__ = [
+    "ListPlanesUseCase",
+    "GetMySuscripcionUseCase",
+    "CheckLimiteUseCase",
+    "RegistrarUsoUseCase",
+    "GetHistorialUsoUseCase",
+    "CambiarPlanUseCase",
+    "CancelSuscripcionUseCase",
+]

@@ -25,38 +25,24 @@ from .repositories import PlanesRepository
 from .services import SuscripcionService
 from .events import (
     SuscripcionCreatedEvent,
-    SuscripcionUpgradedEvent,
+    PlanChangedEvent,
     SuscripcionCancelledEvent,
-    SuscripcionRenewedEvent,
-    SuscripcionExpiredEvent,
-    SuscripcionUpdatedEvent,
     emit_suscripcion_created,
-    emit_suscripcion_upgraded,
+    emit_plan_changed,
     emit_suscripcion_cancelled,
-    emit_suscripcion_renewed,
-    emit_suscripcion_expired,
-    emit_suscripcion_updated
 )
 from .use_cases import (
     ListPlanesUseCase,
-    CheckoutCreateUseCase,
-    ProcessPaymentNotificationUseCase,
+    GetMySuscripcionUseCase,
+    CheckLimiteUseCase,
+    RegistrarUsoUseCase,
+    GetHistorialUsoUseCase,
+    CambiarPlanUseCase,
     CancelSuscripcionUseCase,
-    AdminAssignSubscriptionUseCase,
-    TransaccionListUseCase,
 )
 from .routes import router as suscripciones_router
 from . import event_handlers  # Importar para que esté disponible en main.py
 from .event_handlers import register_event_handlers
-
-from .events import (
-    TransaccionCreatedEvent,
-    TransaccionUpdatedEvent,
-    SuscripcionActualizadaEvent,
-    emit_transaccion_creada,
-    emit_transaccion_actualizada,
-    emit_suscripcion_actualizada,
-)
 
 
 __all__ = [
@@ -86,37 +72,25 @@ __all__ = [
     # Services
     "SuscripcionService",
     
-    # Events
+    # Events (v2.3 Freemium)
     "SuscripcionCreatedEvent",
-    "SuscripcionUpgradedEvent",
+    "PlanChangedEvent",
     "SuscripcionCancelledEvent",
-    "SuscripcionRenewedEvent",
-    "SuscripcionExpiredEvent",
-    "SuscripcionUpdatedEvent",
     "emit_suscripcion_created",
-    "emit_suscripcion_upgraded",
+    "emit_plan_changed",
     "emit_suscripcion_cancelled",
-    "emit_suscripcion_renewed",
-    "emit_suscripcion_expired",
-    "emit_suscripcion_updated",
-    # Transaccion events
-    "TransaccionCreatedEvent",
-    "TransaccionUpdatedEvent",
-    "SuscripcionActualizadaEvent",
-    "emit_transaccion_creada",
-    "emit_transaccion_actualizada",
-    "emit_suscripcion_actualizada",
 
     # Event handlers
     "register_event_handlers",
     
-    # Use Cases
+    # Use Cases (v2.3 Freemium)
     "ListPlanesUseCase",
-    "CheckoutCreateUseCase",
-    "ProcessPaymentNotificationUseCase",
+    "GetMySuscripcionUseCase",
+    "CheckLimiteUseCase",
+    "RegistrarUsoUseCase",
+    "GetHistorialUsoUseCase",
+    "CambiarPlanUseCase",
     "CancelSuscripcionUseCase",
-    "AdminAssignSubscriptionUseCase",
-    "TransaccionListUseCase",
 
     # Router
     "suscripciones_router",

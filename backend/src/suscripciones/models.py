@@ -1,13 +1,14 @@
 """
 Modelos de base de datos para suscripciones.
 """
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from decimal import Decimal
 from sqlalchemy import (
     String,
     Integer,
     DateTime,
+    Date,
     Text,
     Numeric,
     Enum as SQLEnum,
@@ -22,13 +23,17 @@ from enum import Enum
 from src.shared.models import BaseModel
 
 
-# NOTE: La implementación de suscripciones del MÓDULO 2 utiliza la clase `Suscripcion`
-# mapeada a la tabla `suscripciones_usuario`. Esto unifica la representación de una
-# suscripción por usuario y evita ambigüedad con antiguas representaciones.
-
-
 # ------------------------------------------------------------------
-# MÓDULO 2: FREEMIUM Y SUSCRIPCIONES (migrado desde docs/SCRIPT.SQL)
+# MÓDULO: SUSCRIPCIONES Y SISTEMA FREEMIUM v2.3
+# ------------------------------------------------------------------
+# Implementa el sistema de planes (Free/Pro) con control de límites
+# mensuales para características premium.
+#
+# Tablas principales:
+# - planes: Free ($0) y Pro ($29.99/mes)
+# - caracteristicas: Features con límites por plan (limite_free, limite_pro)
+# - suscripciones: Relación usuario <-> plan (1 a 1)
+# - uso_caracteristicas: Control de uso mensual con reset automático
 # ------------------------------------------------------------------
 
 
@@ -87,7 +92,13 @@ class Plan(BaseModel):
 
 
 class Caracteristica(BaseModel):
-    """Tabla `caracteristicas` - funcionalidades/características disponibles por plan."""
+    """Tabla `caracteristicas` - funcionalidades/características disponibles por plan.
+    
+    Almacena los límites mensuales por plan (v2.3 Freemium).
+    - limite_free = NULL: ilimitado en Free
+    - limite_free = 0: bloqueado en Free
+    - limite_free > 0: cantidad máxima de usos mensuales en Free
+    """
 
     __tablename__ = "caracteristicas"
 
@@ -95,7 +106,7 @@ class Caracteristica(BaseModel):
         String(100),
         nullable=False,
         unique=True,
-        comment="Clave funcional de la característica, ej: CHAT_LLM"
+        comment="Clave funcional de la característica, ej: CHATBOT, ML_PREDICTIONS"
     )
 
     descripcion: Mapped[Optional[str]] = mapped_column(
@@ -104,11 +115,29 @@ class Caracteristica(BaseModel):
         comment="Descripción de la característica"
     )
 
+    limite_free: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Límite mensual para usuarios Free. NULL=ilimitado, 0=bloqueado, >0=cantidad de usos/mes"
+    )
+
+    limite_pro: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Límite mensual para usuarios Pro. NULL=ilimitado, 0=bloqueado, >0=cantidad de usos/mes"
+    )
+
     # Relaciones
     planes = relationship(
         "Plan",
         secondary="plan_caracteristicas",
         back_populates="caracteristicas",
+    )
+
+    usos = relationship(
+        "UsoCaracteristica",
+        back_populates="caracteristica",
+        cascade="all, delete-orphan",
     )
 
 
@@ -143,18 +172,22 @@ class PlanCaracteristica(BaseModel):
 
 
 class Suscripcion(BaseModel):
-    """Tabla `suscripciones_usuario` - relación usuario <-> plan.
+    """Tabla `suscripciones` - relación usuario <-> plan.
 
-    Esta clase representa la suscripción asignada a un usuario y está mapeada
-    a la tabla `suscripciones_usuario` en la base de datos.
+    Esta clase representa la suscripción asignada a un usuario.
+    Constraint: Un usuario solo puede tener UNA suscripción activa (UNIQUE en usuario_id).
     """
 
-    __tablename__ = "suscripciones_usuario"
+    __tablename__ = "suscripciones"
+    __table_args__ = (
+        CheckConstraint("fecha_fin IS NULL OR fecha_fin >= fecha_inicio", name="ck_suscripcion_fecha_fin"),
+    )
 
     usuario_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("usuarios.id"),
         nullable=False,
+        unique=True,  # Un usuario solo puede tener una suscripción
         index=True,
         comment="ID del usuario",
     )
@@ -187,14 +220,89 @@ class Suscripcion(BaseModel):
         comment="Estado de la suscripción",
     )
 
-    __table_args__ = (
-        CheckConstraint("fecha_fin IS NULL OR fecha_fin >= fecha_inicio", name="ck_suscripcion_fecha_fin"),
-    )
-
     # Relaciones
     plan = relationship("Plan", back_populates="suscripciones")
     usuario = relationship("Usuario")
 
     def __repr__(self) -> str:  # pragma: no cover - simple repr
         return f"<Suscripcion usuario_id={self.usuario_id} plan_id={self.plan_id} estado={self.estado_suscripcion}>"
+
+
+class UsoCaracteristica(BaseModel):
+    """Tabla `uso_caracteristicas` - control de límites mensuales por usuario.
+    
+    Registra el uso de características con límites (v2.3 Freemium).
+    
+    Ejemplos:
+    - CHATBOT: limite_mensual=5, usos_realizados=2 → quedan 3 usos
+    - ML_PREDICTIONS: limite_mensual=4, usos_realizados=4 → límite alcanzado
+    
+    El periodo se resetea automáticamente el día 1 de cada mes.
+    """
+
+    __tablename__ = "uso_caracteristicas"
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "caracteristica_id", "periodo_mes", name="uk_uso_usuario_feature_periodo"),
+        CheckConstraint("usos_realizados >= 0", name="chk_usos_no_negativos"),
+        CheckConstraint("limite_mensual > 0", name="chk_limite_positivo"),
+    )
+
+    usuario_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("usuarios.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="ID del usuario",
+    )
+
+    caracteristica_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("caracteristicas.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="ID de la característica",
+    )
+
+    periodo_mes: Mapped[date] = mapped_column(
+        Date,  # DATE en SQL, truncado al primer día del mes
+        nullable=False,
+        comment="Primer día del mes (ej: 2025-11-01 para noviembre). Se usa para agrupar por periodo.",
+    )
+
+    usos_realizados: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Contador de usos en el periodo actual",
+    )
+
+    limite_mensual: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="Límite máximo de usos para el periodo (copiado desde caracteristicas.limite_free/pro)",
+    )
+
+    ultimo_uso_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp del último uso registrado",
+    )
+
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Soft delete timestamp",
+    )
+
+    # Relaciones
+    usuario = relationship("Usuario")
+    caracteristica = relationship("Caracteristica", back_populates="usos")
+
+    def __repr__(self) -> str:  # pragma: no cover - simple repr
+        return (
+            f"<UsoCaracteristica usuario_id={self.usuario_id} "
+            f"caracteristica_id={self.caracteristica_id} "
+            f"periodo={self.periodo_mes.strftime('%Y-%m')} "
+            f"usos={self.usos_realizados}/{self.limite_mensual}>"
+        )
 
