@@ -58,7 +58,7 @@ export const isAuthenticated = (): boolean => {
  */
 export const requireAuth = () => {
   if (!isAuthenticated()) {
-    throw redirect({ to: '/login' });
+    throw redirect({ to: '/auth/login' });
   }
 };
 
