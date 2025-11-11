@@ -2,8 +2,8 @@
 Event Bus para comunicación desacoplada entre módulos.
 Implementa patrón Observer/Publisher-Subscriber.
 """
-from typing import Callable, Dict, List, Any, Type
-from dataclasses import dataclass
+from typing import Callable, Dict, List, Type, Awaitable, Any
+from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
 import logging
@@ -11,13 +11,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Type aliases para mejorar legibilidad
+SyncHandler = Callable[[Any], None]
+AsyncHandler = Callable[[Any], Awaitable[None]]
+
+
 @dataclass
 class Event:
     """Clase base para todos los eventos del sistema."""
-    
-    def __post_init__(self):
-        if not hasattr(self, 'timestamp') or self.timestamp is None:
-            self.timestamp = datetime.now()
+    timestamp: datetime = field(default_factory=datetime.now)
     
     async def emit(self):
         """Publica este evento al event bus."""
@@ -56,10 +58,10 @@ class EventBus:
     """
     
     def __init__(self):
-        self._subscribers: Dict[Type[Event], List[Callable]] = {}
-        self._async_subscribers: Dict[Type[Event], List[Callable]] = {}
+        self._subscribers: Dict[Type[Event], List[SyncHandler]] = {}
+        self._async_subscribers: Dict[Type[Event], List[AsyncHandler]] = {}
         
-    def subscribe(self, event_type: Type[Event], handler: Callable):
+    def subscribe(self, event_type: Type[Event], handler: SyncHandler) -> None:
         """
         Suscribe un handler síncrono a un tipo de evento.
         
@@ -72,7 +74,7 @@ class EventBus:
         self._subscribers[event_type].append(handler)
         logger.info(f"Handler {handler.__name__} suscrito a {event_type.__name__}")
     
-    def subscribe_async(self, event_type: Type[Event], handler: Callable):
+    def subscribe_async(self, event_type: Type[Event], handler: AsyncHandler) -> None:
         """
         Suscribe un handler asíncrono a un tipo de evento.
         
@@ -85,12 +87,12 @@ class EventBus:
         self._async_subscribers[event_type].append(handler)
         logger.info(f"Async handler {handler.__name__} suscrito a {event_type.__name__}")
     
-    def unsubscribe(self, event_type: Type[Event], handler: Callable):
+    def unsubscribe(self, event_type: Type[Event], handler: SyncHandler | AsyncHandler) -> None:
         """Desuscribe un handler de un evento."""
         if event_type in self._subscribers:
-            self._subscribers[event_type].remove(handler)
+            self._subscribers[event_type].remove(handler)  # type: ignore
         if event_type in self._async_subscribers:
-            self._async_subscribers[event_type].remove(handler)
+            self._async_subscribers[event_type].remove(handler)  # type: ignore
     
     async def publish(self, event: Event):
         """
@@ -115,7 +117,7 @@ class EventBus:
         
         # Ejecutar handlers asíncronos
         if event_type in self._async_subscribers:
-            tasks = []
+            tasks: List[Awaitable[None]] = []
             for handler in self._async_subscribers[event_type]:
                 tasks.append(self._execute_async_handler(handler, event))
             
@@ -123,7 +125,7 @@ class EventBus:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
     
-    async def _execute_async_handler(self, handler: Callable, event: Event):
+    async def _execute_async_handler(self, handler: AsyncHandler, event: Event) -> None:
         """Ejecuta un handler asíncrono con manejo de errores."""
         try:
             await handler(event)
@@ -133,16 +135,16 @@ class EventBus:
                 f"para evento {type(event).__name__}: {e}"
             )
     
-    def clear(self):
+    def clear(self) -> None:
         """Limpia todos los subscribers (útil para testing)."""
         self._subscribers.clear()
         self._async_subscribers.clear()
     
-    def get_subscribers(self, event_type: Type[Event]) -> List[Callable]:
+    def get_subscribers(self, event_type: Type[Event]) -> List[SyncHandler | AsyncHandler]:
         """Obtiene todos los handlers suscritos a un evento (útil para debugging)."""
         sync_handlers = self._subscribers.get(event_type, [])
         async_handlers = self._async_subscribers.get(event_type, [])
-        return sync_handlers + async_handlers
+        return sync_handlers + async_handlers  # type: ignore
 
 
 # Instancia global del event bus
