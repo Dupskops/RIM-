@@ -1,17 +1,19 @@
 """
 Modelos de base de datos para el módulo de notificaciones.
+Alineado con CREATE_TABLES_MVP_V2.2.sql
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Integer, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey, Time
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import JSONB
-from datetime import datetime
+from datetime import datetime, time
+from typing import Optional, Dict, Any
 import enum
 
 from src.shared.models import BaseModel
 
 
 class TipoNotificacion(str, enum.Enum):
-    """Tipos de notificaciones del sistema."""
+    """Tipos de notificaciones del sistema (tipo_notificacion ENUM)."""
     INFO = "info"
     WARNING = "warning"
     ALERT = "alert"
@@ -20,7 +22,7 @@ class TipoNotificacion(str, enum.Enum):
 
 
 class CanalNotificacion(str, enum.Enum):
-    """Canales de envío de notificaciones."""
+    """Canales de envío de notificaciones (canal_notificacion ENUM)."""
     IN_APP = "in_app"  # Notificación en la app
     EMAIL = "email"     # Correo electrónico
     PUSH = "push"       # Push notification (móvil)
@@ -28,157 +30,299 @@ class CanalNotificacion(str, enum.Enum):
 
 
 class EstadoNotificacion(str, enum.Enum):
-    """Estados de una notificación."""
+    """Estados de una notificación (estado_notificacion ENUM)."""
     PENDIENTE = "pendiente"
     ENVIADA = "enviada"
     LEIDA = "leida"
     FALLIDA = "fallida"
 
 
+class ReferenciaNotificacion(str, enum.Enum):
+    """Tipos de referencia para notificaciones (referencia_tipo_enum)."""
+    FALLA = "falla"
+    MANTENIMIENTO = "mantenimiento"
+    SENSOR = "sensor"
+    PREDICCION = "prediccion"
+
+
 class Notificacion(BaseModel):
     """
     Modelo de notificación del sistema.
     
+    Tabla: notificaciones
+    Esquema: CREATE_TABLES_MVP_V2.2.sql
+    
     Representa una notificación que puede ser enviada a un usuario
     a través de múltiples canales (in-app, email, push, sms).
+    
+    Campos según SQL v2.2:
+    - usuario_id, titulo, mensaje
+    - tipo (tipo_notificacion ENUM)
+    - canal (canal_notificacion ENUM)
+    - estado (estado_notificacion ENUM)
+    - referencia_tipo (referencia_tipo_enum), referencia_id
+    - leida, leida_en, intentos_envio
+    - created_at, updated_at, deleted_at (heredados de BaseModel)
     """
     __tablename__ = "notificaciones"
     
     # Destinatario
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    usuario_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("usuarios.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="ID del usuario destinatario"
+    )
     
     # Contenido
-    titulo = Column(String(200), nullable=False)
-    mensaje = Column(Text, nullable=False)
-    tipo = Column(SQLEnum(TipoNotificacion), nullable=False, default=TipoNotificacion.INFO)
+    titulo: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        comment="Título de la notificación"
+    )
+    
+    mensaje: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="Mensaje de la notificación"
+    )
+    
+    tipo: Mapped[TipoNotificacion] = mapped_column(
+        SQLEnum(TipoNotificacion, name="tipo_notificacion", native_enum=True),
+        nullable=False,
+        comment="Tipo: info, warning, alert, success, error"
+    )
     
     # Canal y estado
-    canal = Column(SQLEnum(CanalNotificacion), nullable=False, default=CanalNotificacion.IN_APP)
-    estado = Column(SQLEnum(EstadoNotificacion), nullable=False, default=EstadoNotificacion.PENDIENTE)
+    canal: Mapped[CanalNotificacion] = mapped_column(
+        SQLEnum(CanalNotificacion, name="canal_notificacion", native_enum=True),
+        nullable=False,
+        comment="Canal: in_app, email, push, sms"
+    )
     
-    # Metadata
-    datos_adicionales = Column(JSONB, nullable=True)  # JSON con datos extra
+    estado: Mapped[EstadoNotificacion] = mapped_column(
+        SQLEnum(EstadoNotificacion, name="estado_notificacion", native_enum=True),
+        nullable=False,
+        default=EstadoNotificacion.PENDIENTE,
+        server_default="pendiente",
+        comment="Estado: pendiente, enviada, leida, fallida"
+    )
     
-    # Acción (opcional)
-    accion_url = Column(String(500), nullable=True)  # URL a la que redirigir al hacer click
-    accion_tipo = Column(String(50), nullable=True)  # Tipo de acción: "navigate", "external", etc.
+    # Referencia (opcional - a qué objeto hace referencia)
+    referencia_tipo: Mapped[Optional[str]] = mapped_column(
+        SQLEnum(ReferenciaNotificacion, name="referencia_tipo_enum", native_enum=True),
+        nullable=True,
+        comment="Tipo de referencia: falla, mantenimiento, sensor, prediccion"
+    )
     
-    # Referencia (opcional)
-    referencia_tipo = Column(String(50), nullable=True)  # "falla", "mantenimiento", "sensor", etc.
-    referencia_id = Column(Integer, nullable=True)  # ID del objeto referenciado
+    referencia_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="ID del objeto referenciado"
+    )
     
-    # Control
-    leida = Column(Boolean, default=False, nullable=False)
-    leida_en = Column(DateTime, nullable=True)
+    # Control de lectura
+    leida: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Indica si la notificación fue leída"
+    )
     
-    enviada = Column(Boolean, default=False, nullable=False)
-    enviada_en = Column(DateTime, nullable=True)
+    leida_en: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Fecha y hora de lectura"
+    )
     
-    # Reintento (para notificaciones fallidas)
-    intentos_envio = Column(Integer, default=0, nullable=False)
-    ultimo_error = Column(Text, nullable=True)
-    
-    # Expiración (opcional)
-    expira_en = Column(DateTime, nullable=True)
+    # Control de envío (para reintentos)
+    intentos_envio: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Número de intentos de envío realizados"
+    )
     
     # Relaciones
     usuario = relationship("Usuario", back_populates="notificaciones")
     
-    def __repr__(self):
-        return f"<Notificacion {self.id}: {self.titulo} - {self.estado}>"
+    def __repr__(self) -> str:
+        return f"<Notificacion {self.id}: {self.titulo} [{self.estado.value}]>"
     
-    def marcar_como_leida(self):
+    def marcar_como_leida(self) -> None:
         """Marca la notificación como leída."""
+        from datetime import timezone
         self.leida = True
-        self.leida_en = datetime.utcnow()
+        self.leida_en = datetime.now(timezone.utc)
         if self.estado == EstadoNotificacion.ENVIADA:
             self.estado = EstadoNotificacion.LEIDA
     
-    def marcar_como_enviada(self):
+    def marcar_como_enviada(self) -> None:
         """Marca la notificación como enviada."""
-        self.enviada = True
-        self.enviada_en = datetime.utcnow()
         self.estado = EstadoNotificacion.ENVIADA
+        self.intentos_envio += 1
     
-    def marcar_como_fallida(self, error: str):
+    def marcar_como_fallida(self) -> None:
         """Marca la notificación como fallida."""
         self.estado = EstadoNotificacion.FALLIDA
-        self.ultimo_error = error
         self.intentos_envio += 1
     
     @property
-    def esta_expirada(self) -> bool:
-        """Verifica si la notificación está expirada."""
-        if self.expira_en is None:
-            return False
-        return datetime.utcnow() > self.expira_en
-    
-    @property
     def puede_reintentarse(self) -> bool:
-        """Verifica si se puede reintentar el envío."""
+        """Verifica si se puede reintentar el envío (máximo 3 intentos)."""
         return (
             self.estado == EstadoNotificacion.FALLIDA and
-            self.intentos_envio < 3 and
-            not self.esta_expirada
+            self.intentos_envio < 3
         )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convierte la notificación a diccionario."""
+        return {
+            "id": self.id,
+            "usuario_id": self.usuario_id,
+            "titulo": self.titulo,
+            "mensaje": self.mensaje,
+            "tipo": self.tipo.value,
+            "canal": self.canal.value,
+            "estado": self.estado.value,
+            "referencia_tipo": self.referencia_tipo,
+            "referencia_id": self.referencia_id,
+            "leida": self.leida,
+            "leida_en": self.leida_en.isoformat() if self.leida_en else None,
+            "intentos_envio": self.intentos_envio,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
 
 class PreferenciaNotificacion(BaseModel):
     """
     Preferencias de notificaciones por usuario.
     
+    Tabla: preferencias_notificaciones
+    Esquema: CREATE_TABLES_MVP_V2.2.sql
+    
     Permite a los usuarios controlar qué notificaciones reciben
     y por qué canales.
+    
+    Campos según SQL v2.2:
+    - usuario_id (UNIQUE)
+    - canales_habilitados (JSONB): {"in_app": true, "email": false, "push": false, "sms": false}
+    - tipos_habilitados (JSONB): {"fallas": true, "mantenimiento": true, "predicciones": true}
+    - no_molestar_inicio (TIME), no_molestar_fin (TIME)
+    - configuracion_adicional (JSONB)
+    - created_at, updated_at (sin deleted_at según SQL)
     """
     __tablename__ = "preferencias_notificaciones"
     
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, unique=True, index=True)
+    usuario_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("usuarios.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+        comment="ID del usuario"
+    )
     
-    # Canales habilitados
-    in_app_habilitado = Column(Boolean, default=True, nullable=False)
-    email_habilitado = Column(Boolean, default=True, nullable=False)
-    push_habilitado = Column(Boolean, default=False, nullable=False)
-    sms_habilitado = Column(Boolean, default=False, nullable=False)
+    # Canales habilitados (JSONB según SQL v2.2)
+    # Default: '{"in_app": true, "email": false, "push": false, "sms": false}'::jsonb
+    canales_habilitados: Mapped[Optional[Dict[str, bool]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        default={"in_app": True, "email": False, "push": False, "sms": False},
+        server_default='{"in_app": true, "email": false, "push": false, "sms": false}',
+        comment="Canales habilitados por usuario"
+    )
     
-    # Tipos de notificaciones habilitadas
-    notif_fallas_habilitado = Column(Boolean, default=True, nullable=False)
-    notif_mantenimiento_habilitado = Column(Boolean, default=True, nullable=False)
-    notif_sensores_habilitado = Column(Boolean, default=True, nullable=False)
-    notif_sistema_habilitado = Column(Boolean, default=True, nullable=False)
-    notif_marketing_habilitado = Column(Boolean, default=False, nullable=False)
+    # Tipos de notificaciones habilitadas (JSONB según SQL v2.2)
+    # Default: '{"fallas": true, "mantenimiento": true, "predicciones": true}'::jsonb
+    tipos_habilitados: Mapped[Optional[Dict[str, bool]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        default={"fallas": True, "mantenimiento": True, "predicciones": True},
+        server_default='{"fallas": true, "mantenimiento": true, "predicciones": true}',
+        comment="Tipos de notificaciones habilitadas"
+    )
     
-    # Horarios (opcional - para no molestar)
-    no_molestar_inicio = Column(String(5), nullable=True)  # "22:00"
-    no_molestar_fin = Column(String(5), nullable=True)     # "08:00"
+    # Horarios "No molestar" (TIME según SQL v2.2)
+    no_molestar_inicio: Mapped[Optional[time]] = mapped_column(
+        Time,
+        nullable=True,
+        comment="Hora inicio período No molestar (ej: 22:00)"
+    )
     
-    # Configuración adicional
-    configuracion_adicional = Column(JSONB, nullable=True)
+    no_molestar_fin: Mapped[Optional[time]] = mapped_column(
+        Time,
+        nullable=True,
+        comment="Hora fin período No molestar (ej: 08:00)"
+    )
     
-    def __repr__(self):
+    # Configuración adicional (JSONB)
+    configuracion_adicional: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Configuración extra del usuario"
+    )
+    
+    def __repr__(self) -> str:
         return f"<PreferenciaNotificacion usuario_id={self.usuario_id}>"
     
     def canal_habilitado(self, canal: CanalNotificacion) -> bool:
         """Verifica si un canal está habilitado."""
-        if canal == CanalNotificacion.IN_APP:
-            return self.in_app_habilitado
-        elif canal == CanalNotificacion.EMAIL:
-            return self.email_habilitado
-        elif canal == CanalNotificacion.PUSH:
-            return self.push_habilitado
-        elif canal == CanalNotificacion.SMS:
-            return self.sms_habilitado
-        return False
+        if not self.canales_habilitados:
+            return False
+        
+        canal_key = canal.value  # "in_app", "email", "push", "sms"
+        return self.canales_habilitados.get(canal_key, False)
     
-    def tipo_notificacion_habilitado(self, tipo_referencia: str) -> bool:
-        """Verifica si un tipo de notificación está habilitado."""
-        if tipo_referencia == "falla":
-            return self.notif_fallas_habilitado
-        elif tipo_referencia == "mantenimiento":
-            return self.notif_mantenimiento_habilitado
-        elif tipo_referencia == "sensor":
-            return self.notif_sensores_habilitado
-        elif tipo_referencia == "sistema":
-            return self.notif_sistema_habilitado
-        elif tipo_referencia == "marketing":
-            return self.notif_marketing_habilitado
-        return True  # Por defecto, permitir
+    def tipo_notificacion_habilitado(self, tipo: str) -> bool:
+        """
+        Verifica si un tipo de notificación está habilitado.
+        
+        Args:
+            tipo: "fallas", "mantenimiento", "predicciones", "sensores", etc.
+        
+        Returns:
+            True si el tipo está habilitado, False en caso contrario
+        """
+        if not self.tipos_habilitados:
+            return True  # Por defecto permitir si no hay configuración
+        
+        return self.tipos_habilitados.get(tipo, True)
+    
+    def esta_en_horario_no_molestar(self) -> bool:
+        """
+        Verifica si actualmente está en horario "No molestar".
+        
+        Returns:
+            True si está en horario "No molestar", False en caso contrario
+        """
+        if not self.no_molestar_inicio or not self.no_molestar_fin:
+            return False
+        
+        from datetime import timezone
+        hora_actual = datetime.now(timezone.utc).time()
+        
+        # Caso 1: Rango dentro del mismo día (ej: 22:00 - 23:59)
+        if self.no_molestar_inicio <= self.no_molestar_fin:
+            return self.no_molestar_inicio <= hora_actual <= self.no_molestar_fin
+        
+        # Caso 2: Rango que cruza medianoche (ej: 22:00 - 08:00)
+        return hora_actual >= self.no_molestar_inicio or hora_actual <= self.no_molestar_fin
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convierte las preferencias a diccionario."""
+        return {
+            "id": self.id,
+            "usuario_id": self.usuario_id,
+            "canales_habilitados": self.canales_habilitados,
+            "tipos_habilitados": self.tipos_habilitados,
+            "no_molestar_inicio": self.no_molestar_inicio.isoformat() if self.no_molestar_inicio else None,
+            "no_molestar_fin": self.no_molestar_fin.isoformat() if self.no_molestar_fin else None,
+            "configuracion_adicional": self.configuracion_adicional,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

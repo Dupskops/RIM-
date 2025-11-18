@@ -1,7 +1,7 @@
 """
 Repositorio para operaciones de base de datos del chatbot.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Optional, List
 from sqlalchemy import select, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,7 +111,7 @@ class ConversacionRepository:
 
     async def actualizar_actividad(self, conversacion: Conversacion) -> None:
         """Actualiza la última actividad de una conversación."""
-        conversacion.ultima_actividad = datetime.utcnow()
+        conversacion.ultima_actividad = datetime.now(timezone.utc)
         conversacion.total_mensajes += 1
         await self.db.commit()
 
@@ -122,7 +122,7 @@ class ConversacionRepository:
 
     async def delete(self, conversacion: Conversacion) -> None:
         """Soft delete de una conversación."""
-        conversacion.deleted_at = datetime.utcnow()
+        conversacion.deleted_at = datetime.now(timezone.utc)
         await self.db.commit()
 
 
@@ -208,7 +208,7 @@ class MensajeRepository:
 
     async def count_by_usuario_hoy(self, usuario_id: int) -> int:
         """Cuenta mensajes enviados por un usuario hoy."""
-        hoy_inicio = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        hoy_inicio = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         
         result = await self.db.execute(
             select(func.count(Mensaje.id))
@@ -226,7 +226,7 @@ class MensajeRepository:
 
     async def get_tokens_usados_hoy(self, usuario_id: int) -> int:
         """Calcula tokens usados por un usuario hoy."""
-        hoy_inicio = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        hoy_inicio = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         
         result = await self.db.execute(
             select(func.coalesce(func.sum(Mensaje.tokens_usados), 0))
@@ -302,6 +302,6 @@ class MensajeRepository:
         mensajes = result.scalars().all()
         
         for mensaje in mensajes:
-            mensaje.deleted_at = datetime.utcnow()
+            mensaje.deleted_at = datetime.now(timezone.utc)
         
         await self.db.commit()

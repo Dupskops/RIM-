@@ -29,22 +29,21 @@ services:
   # ============================================
   # Redis Cache & Pub/Sub
   # ============================================
-  redis:
-    image: redis:7-alpine
-    container_name: rim-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass rim_redis_pass_2024
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - rim-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+#  redis:
+#    image: redis:7-alpine
+#    container_name: rim-redis
+#    restart: unless-stopped
+ #   command: redis-server --appendonly yes --requirepass rim_redis_pass_2024
+ #   ports:
+ #     - "6379:6379"
+ #   volumes:
+ #     - redis_data:/data
+ #   networks:
+ #     - rim-network
+ #   healthcheck:
+ #     interval: 10s
+#    timeout: 3s
+#    retries: 5
 
   # ============================================
   # Ollama LLM Server (con GPU opcional)

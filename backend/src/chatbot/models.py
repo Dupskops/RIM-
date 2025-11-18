@@ -1,12 +1,46 @@
 """
 Modelos de base de datos para el módulo de chatbot.
+
+Alineado con MVP v2.3 - Sistema de límites Freemium.
+Las conversaciones del chatbot están limitadas a 5/mes para usuarios Free.
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Boolean, Float
+from sqlalchemy import String, Integer, Text, ForeignKey, Boolean, CheckConstraint, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+import enum
 
 from src.shared.models import BaseModel
+
+
+class RoleMensaje(str, enum.Enum):
+    """Rol del mensaje en la conversación."""
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class TipoPrompt(str, enum.Enum):
+    """
+    Tipo de prompt usado para generar la respuesta.
+    
+    MVP v2.3 - Tipos expandidos:
+    - DIAGNOSTIC: Diagnóstico de problemas mecánicos
+    - MAINTENANCE: Recomendaciones de mantenimiento
+    - EXPLANATION: Explicaciones educativas sobre motocicletas
+    - ML_ANALYSIS: Análisis ML completo de componentes (Flujo #7)
+    - TRIP_ANALYSIS: Análisis de viajes y patrones de conducción (Flujo #8)
+    - SENSOR_READING: Interpretación de lecturas de sensores en tiempo real (Flujo #3)
+    - FREEMIUM: Comparativas de planes y funcionalidades (Flujo #9)
+    - GENERAL: Conversación general
+    """
+    DIAGNOSTIC = "diagnostic"
+    MAINTENANCE = "maintenance"
+    EXPLANATION = "explanation"
+    ML_ANALYSIS = "ml_analysis"
+    TRIP_ANALYSIS = "trip_analysis"
+    SENSOR_READING = "sensor_reading"
+    FREEMIUM = "freemium"
+    GENERAL = "general"
 
 
 class Conversacion(BaseModel):
@@ -14,38 +48,88 @@ class Conversacion(BaseModel):
     Modelo de conversación del chatbot.
     
     Almacena el historial completo de conversaciones entre usuario y chatbot.
+    Límite Free: 5 conversaciones por mes.
+    Plan Pro: conversaciones ilimitadas.
+    
+    Alineado con tabla 'conversaciones' del DDL MVP v2.3.
     """
     __tablename__ = "conversaciones"
+    
+    __table_args__ = (
+        CheckConstraint('total_mensajes >= 0', name='chk_total_mensajes_no_negativo'),
+    )
 
-    # Identificación (id ya está en BaseModel)
-    conversation_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    # Identificación única de la conversación
+    conversation_id: Mapped[str] = mapped_column(
+        String(100), 
+        unique=True, 
+        index=True, 
+        nullable=False,
+        comment="ID único de la conversación (ej: conv_20251110_abc123)"
+    )
     
-    # Usuario
-    usuario_id: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    # Relaciones obligatorias
+    usuario_id: Mapped[int] = mapped_column(
+        Integer, 
+        ForeignKey("usuarios.id", ondelete="CASCADE"), 
+        nullable=False, 
+        index=True,
+        comment="Usuario propietario de la conversación"
+    )
     
-    # Contexto
-    moto_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("motos.id"), nullable=True, index=True)
+    moto_id: Mapped[int] = mapped_column(
+        Integer, 
+        ForeignKey("motos.id", ondelete="CASCADE"), 
+        nullable=False, 
+        index=True,
+        comment="Moto sobre la que trata la conversación"
+    )
     
     # Metadata
-    titulo: Mapped[str] = mapped_column(String(200), nullable=False)
-    nivel_acceso: Mapped[str] = mapped_column(String(20), nullable=False, default="freemium")  # freemium/premium
+    titulo: Mapped[Optional[str]] = mapped_column(
+        String(200), 
+        nullable=True,
+        comment="Título generado automáticamente o personalizado"
+    )
     
-    # Estado
-    activa: Mapped[bool] = mapped_column(Boolean, default=True)
-    total_mensajes: Mapped[int] = mapped_column(Integer, default=0)
+    # Estado de la conversación
+    activa: Mapped[bool] = mapped_column(
+        Boolean, 
+        default=True, 
+        index=True,
+        comment="True si la conversación está activa (no archivada)"
+    )
     
-    # Fechas
-    ultima_actividad: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    total_mensajes: Mapped[int] = mapped_column(
+        Integer, 
+        default=0,
+        comment="Contador de mensajes en la conversación"
+    )
+    
+    # Timestamp de última interacción
+    ultima_actividad: Mapped[datetime] = mapped_column(
+        "ultima_actividad",
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+        comment="Timestamp de la última actividad en la conversación"
+    )
     
     # Relaciones
     usuario = relationship("Usuario", back_populates="conversaciones")
     moto = relationship("Moto", back_populates="conversaciones")
-    mensajes = relationship("Mensaje", back_populates="conversacion", cascade="all, delete-orphan")
+    mensajes = relationship(
+        "Mensaje", 
+        back_populates="conversacion", 
+        cascade="all, delete-orphan",
+        order_by="Mensaje.created_at"
+    )
 
     def __repr__(self) -> str:
         return (
             f"<Conversacion(id={self.id}, conversation_id='{self.conversation_id}', "
-            f"usuario_id={self.usuario_id}, total_mensajes={self.total_mensajes})>"
+            f"usuario_id={self.usuario_id}, moto_id={self.moto_id}, "
+            f"total_mensajes={self.total_mensajes}, activa={self.activa})>"
         )
 
 
@@ -54,33 +138,65 @@ class Mensaje(BaseModel):
     Modelo de mensaje individual en una conversación.
     
     Almacena cada mensaje enviado por el usuario o generado por el chatbot.
+    Los mensajes se ordenan cronológicamente y forman el historial de la conversación.
+    
+    Alineado con tabla 'mensajes' del DDL MVP v2.3.
     """
     __tablename__ = "mensajes"
 
-    # Identificación (id ya está en BaseModel)
+    # Relación con conversación (obligatoria)
+    conversacion_id: Mapped[int] = mapped_column(
+        Integer, 
+        ForeignKey("conversaciones.id", ondelete="CASCADE"), 
+        nullable=False, 
+        index=True,
+        comment="ID de la conversación a la que pertenece el mensaje"
+    )
     
-    # Relación con conversación
-    conversacion_id: Mapped[int] = mapped_column(Integer, ForeignKey("conversaciones.id"), nullable=False, index=True)
+    # Rol del mensaje
+    role: Mapped[RoleMensaje] = mapped_column(
+        SQLEnum(RoleMensaje, native_enum=True, name="role_mensaje"),
+        nullable=False,
+        index=True,
+        comment="Rol del mensaje: user (usuario) o assistant (chatbot)"
+    )
     
-    # Contenido
-    role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" o "assistant"
-    contenido: Mapped[str] = mapped_column(Text, nullable=False)
+    # Contenido del mensaje
+    contenido: Mapped[str] = mapped_column(
+        Text, 
+        nullable=False,
+        comment="Contenido textual del mensaje"
+    )
     
-    # Metadata del mensaje
-    tokens_usados: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    tiempo_respuesta_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    modelo_usado: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Tipo de prompt (solo para mensajes del assistant)
+    tipo_prompt: Mapped[TipoPrompt] = mapped_column(
+        SQLEnum(TipoPrompt, native_enum=True, name="tipo_prompt"),
+        default=TipoPrompt.GENERAL,
+        nullable=True,
+        comment="Tipo de prompt usado: diagnostic, maintenance, explanation, general"
+    )
     
-    # Contexto usado (para mensajes del asistente)
-    contexto_usado: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON con datos de contexto
-    tipo_prompt: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # diagnostic/maintenance/explanation
+    # Métricas de LLM (MVP v2.3 - solo para mensajes del assistant)
+    tokens_usados: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=True,
+        comment="Tokens generados por el LLM para este mensaje"
+    )
     
-    # Confianza y calidad
-    confianza: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tiempo_respuesta_ms: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=True,
+        comment="Tiempo de respuesta del LLM en milisegundos"
+    )
     
-    # Feedback del usuario
-    util: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    modelo_usado: Mapped[str] = mapped_column(
+        String(50),
+        default="unknown",
+        nullable=True,
+        comment="Modelo de LLM usado (ej: llama3, mistral)"
+    )
     
     # Relaciones
     conversacion = relationship("Conversacion", back_populates="mensajes")
@@ -88,6 +204,17 @@ class Mensaje(BaseModel):
     def __repr__(self) -> str:
         contenido_preview = self.contenido[:50] + "..." if len(self.contenido) > 50 else self.contenido
         return (
-            f"<Mensaje(id={self.id}, role='{self.role}', "
+            f"<Mensaje(id={self.id}, conversacion_id={self.conversacion_id}, "
+            f"role={self.role.value}, tipo_prompt={self.tipo_prompt.value if self.tipo_prompt else 'None'}, "
             f"contenido='{contenido_preview}')>"
         )
+    
+    @property
+    def es_usuario(self) -> bool:
+        """Retorna True si el mensaje fue enviado por el usuario."""
+        return self.role == RoleMensaje.USER
+    
+    @property
+    def es_asistente(self) -> bool:
+        """Retorna True si el mensaje fue generado por el asistente."""
+        return self.role == RoleMensaje.ASSISTANT

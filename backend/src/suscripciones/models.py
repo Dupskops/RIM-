@@ -71,7 +71,7 @@ class Plan(BaseModel):
     )
 
     periodo_facturacion: Mapped[PeriodoPlan] = mapped_column(
-        SQLEnum(PeriodoPlan, native_enum=True),
+        SQLEnum(PeriodoPlan, name="periodo_facturacion_enum", native_enum=True, values_callable=lambda x: [e.value for e in x]),
         default=PeriodoPlan.UNICO,
         nullable=False,
         comment="Periodo de facturación"
@@ -214,9 +214,10 @@ class Suscripcion(BaseModel):
     )
 
     estado_suscripcion: Mapped[EstadoSuscripcion] = mapped_column(
-        SQLEnum(EstadoSuscripcion, native_enum=True),
+        SQLEnum(EstadoSuscripcion, name="estado_suscripcion_enum", native_enum=True, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=EstadoSuscripcion.ACTIVA,
+        server_default="activa",
         comment="Estado de la suscripción",
     )
 

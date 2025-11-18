@@ -7,7 +7,6 @@ from src.chatbot.schemas import (
     # Request schemas
     ConversacionCreate,
     MensajeCreate,
-    MensajeFeedback,
     ChatRequest,
     # Response schemas
     MensajeResponse,
@@ -23,7 +22,6 @@ from src.chatbot.schemas import (
     WSChatMessage,
     WSTypingIndicator,
     WSHistoryRequest,
-    WSClearHistory,
     WSChatResponse,
     WSStreamChunk,
     WSError,
@@ -33,10 +31,8 @@ from src.chatbot.events import (
     ConversacionIniciadaEvent,
     MensajeEnviadoEvent,
     RespuestaGeneradaEvent,
-    FeedbackRecibidoEvent,
     ErrorChatbotEvent,
     ConversacionFinalizadaEvent,
-    LimiteAlcanzadoEvent,
 )
 from src.chatbot.prompts.diagnostic_prompt import (
     DIAGNOSTIC_SYSTEM_PROMPT,
@@ -65,7 +61,6 @@ __all__ = [
     # Request Schemas
     "ConversacionCreate",
     "MensajeCreate",
-    "MensajeFeedback",
     "ChatRequest",
     # Response Schemas
     "MensajeResponse",
@@ -80,7 +75,6 @@ __all__ = [
     "WSChatMessage",
     "WSTypingIndicator",
     "WSHistoryRequest",
-    "WSClearHistory",
     "WSChatResponse",
     "WSStreamChunk",
     "WSError",
@@ -89,10 +83,8 @@ __all__ = [
     "ConversacionIniciadaEvent",
     "MensajeEnviadoEvent",
     "RespuestaGeneradaEvent",
-    "FeedbackRecibidoEvent",
     "ErrorChatbotEvent",
     "ConversacionFinalizadaEvent",
-    "LimiteAlcanzadoEvent",
     # Prompt Functions
     "DIAGNOSTIC_SYSTEM_PROMPT",
     "build_diagnostic_prompt",

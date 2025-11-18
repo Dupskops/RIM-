@@ -2,11 +2,18 @@
 Modelos ORM para autenticación.
 Define la estructura de datos de usuarios y tokens en la base de datos.
 """
-from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import enum
 
 from src.shared.models import BaseModel
+
+
+class RolUsuario(str, enum.Enum):
+    """Roles de usuario en el sistema."""
+    USER = "user"  # Minúsculas para coincidir con PostgreSQL ENUM
+    ADMIN = "admin"  # Minúsculas para coincidir con PostgreSQL ENUM
 
 
 class Usuario(BaseModel):
@@ -42,7 +49,12 @@ class Usuario(BaseModel):
     # Estado de la cuenta
     email_verificado = Column(Boolean, default=False, nullable=False)
     activo = Column(Boolean, default=True, nullable=False)
-    rol = Column(String(20), default="user", nullable=False, index=True)
+    rol = Column(
+        SQLEnum(RolUsuario, native_enum=True, name="rol_usuario", values_callable=lambda obj: [e.value for e in obj]),
+        default=RolUsuario.USER,
+        nullable=False,
+        index=True
+    )
     
     # Metadata de login
     ultimo_login = Column(DateTime(timezone=True), nullable=True)
@@ -67,7 +79,7 @@ class Usuario(BaseModel):
             "telefono": self.telefono,
             "email_verificado": self.email_verificado,
             "activo": self.activo,
-            "rol": self.rol,
+            "rol": self.rol.value if isinstance(self.rol, RolUsuario) else self.rol,
             "ultimo_login": self.ultimo_login.isoformat() if self.ultimo_login else None,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),

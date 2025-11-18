@@ -209,6 +209,9 @@ class Componente(Base):
     estados_actuales: Mapped[list["EstadoActual"]] = relationship(
         "EstadoActual", back_populates="componente", cascade="all, delete-orphan"
     )
+    fallas: Mapped[list["Falla"]] = relationship(
+        "Falla", back_populates="componente", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Componente(id={self.id}, nombre='{self.nombre}')>"
