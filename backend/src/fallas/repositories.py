@@ -3,7 +3,7 @@ Repositorio para operaciones de base de datos de fallas.
 Capa de acceso a datos siguiendo patrón Repository.
 """
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,7 +181,7 @@ class FallaRepository:
         Returns:
             Lista de fallas recientes
         """
-        fecha_desde = datetime.utcnow() - timedelta(days=dias)
+        fecha_desde = datetime.now(timezone.utc) - timedelta(days=dias)
         
         result = await self.session.execute(
             select(Falla).where(
@@ -222,7 +222,7 @@ class FallaRepository:
         if not falla:
             return False
         
-        falla.deleted_at = datetime.utcnow()
+        falla.deleted_at = datetime.now(timezone.utc)
         await self.session.commit()
         return True
     

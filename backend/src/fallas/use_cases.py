@@ -3,7 +3,7 @@ Casos de uso del módulo de fallas.
 Orquesta la lógica de negocio y coordina entre repositorios y servicios.
 """
 from typing import Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Falla
@@ -110,7 +110,7 @@ class CreateFallaUseCase:
             requiere_atencion_inmediata=data.requiere_atencion_inmediata,
             puede_conducir=puede_conducir,
             solucion_sugerida=solucion_sugerida,
-            fecha_deteccion=datetime.utcnow()
+            fecha_deteccion=datetime.now(timezone.utc)
         )
         
         # Guardar en BD
@@ -193,7 +193,7 @@ class CreateFallaMLUseCase:
             requiere_atencion_inmediata=data.requiere_atencion_inmediata,
             puede_conducir=puede_conducir,
             solucion_sugerida=data.solucion_sugerida or generate_solucion_sugerida(data.tipo, data.severidad),
-            fecha_deteccion=datetime.utcnow()
+            fecha_deteccion=datetime.now(timezone.utc)
         )
         
         falla = await self.repo.create(falla)
@@ -316,7 +316,7 @@ class DiagnosticarFallaUseCase:
         falla.estado = EstadoFalla.EN_REVISION.value
         falla.solucion_sugerida = data.solucion_sugerida
         falla.costo_estimado = data.costo_estimado or estimate_costo_reparacion(falla.tipo, falla.severidad)
-        falla.fecha_diagnostico = datetime.utcnow()
+        falla.fecha_diagnostico = datetime.now(timezone.utc)
         
         if data.notas_tecnico:
             falla.notas_tecnico = data.notas_tecnico
@@ -375,7 +375,7 @@ class ResolverFallaUseCase:
         falla.estado = EstadoFalla.RESUELTA.value
         falla.solucion_aplicada = data.solucion_aplicada
         falla.costo_real = data.costo_real
-        falla.fecha_resolucion = datetime.utcnow()
+        falla.fecha_resolucion = datetime.now(timezone.utc)
         
         if data.notas_tecnico:
             falla.notas_tecnico = data.notas_tecnico

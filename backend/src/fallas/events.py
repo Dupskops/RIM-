@@ -3,7 +3,6 @@ Eventos del módulo de fallas.
 Define eventos para comunicación desacoplada con otros módulos.
 """
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
 from ..shared.event_bus import Event
