@@ -197,6 +197,60 @@ app = FastAPI(
     openapi_url=f"{settings.API_PREFIX}/openapi.json",
 )
 
+# ============================================
+# MANEJO GLOBAL DE EXCEPCIONES RIM
+# ============================================
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from src.shared.base_models import ErrorResponse, create_error_response
+from src.shared.exceptions import NotFoundError, ForbiddenError, ValidationError as RIMValidationError, RIMException
+
+
+@app.exception_handler(NotFoundError)
+async def handle_not_found(request, exc: NotFoundError):
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'NOT_FOUND'),
+        message=exc.message,
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=404, content=jsonable_encoder(payload))
+
+
+@app.exception_handler(ForbiddenError)
+async def handle_forbidden(request, exc: ForbiddenError):
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'FORBIDDEN_ERROR'),
+        message=exc.message,
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=403, content=jsonable_encoder(payload))
+
+
+@app.exception_handler(RIMValidationError)
+async def handle_rim_validation(request, exc: RIMValidationError):
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'VALIDATION_ERROR'),
+        message=exc.message,
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=422, content=jsonable_encoder(payload))
+
+
+@app.exception_handler(RIMException)
+async def handle_rim_exception(request, exc: RIMException):
+    # Manejo por defecto para excepciones de negocio no mapeadas
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'RIM_ERROR'),
+        message=getattr(exc, 'message', str(exc)),
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=400, content=jsonable_encoder(payload))
+
+
 
 # ============================================
 # MIDDLEWARE

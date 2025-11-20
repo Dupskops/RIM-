@@ -154,6 +154,10 @@ class SuscripcionReadSchema(BaseModel):
     fecha_inicio: datetime
     fecha_fin: Optional[datetime] = None
     estado_suscripcion: Optional[str] = None
+    features_status: List[FeatureStatusSchema] = Field(
+        default=[], 
+        description="Estado detallado de todas las características (uso, límites, upsells)"
+    )
 
     class Config:
         from_attributes = True
@@ -195,6 +199,26 @@ class CambiarPlanRequest(BaseModel):
     plan_id: int = Field(..., description="ID del plan destino", gt=0)
 
 
+
+class FeatureStatusSchema(BaseModel):
+    """Estado detallado de una característica para el usuario."""
+    caracteristica: str = Field(..., description="Clave de la característica")
+    descripcion: Optional[str] = Field(None, description="Descripción amigable")
+    uso_actual: int = Field(0, description="Uso realizado este mes")
+    limite_actual: Optional[int] = Field(None, description="Límite del plan actual (NULL=ilimitado)")
+    limite_pro: Optional[int] = Field(None, description="Límite del plan Pro (NULL=ilimitado)")
+    upsell_message: Optional[str] = Field(None, description="Mensaje para incentivar upgrade si aplica")
+
+    class Config:
+        from_attributes = True
+
+
+class SuscripcionEstadoResponse(BaseModel):
+    """Respuesta agregada con estado completo de la suscripción."""
+    plan_actual: str = Field(..., description="Nombre del plan actual (FREE/Pro)")
+    features: List[FeatureStatusSchema] = Field(..., description="Lista de características y su estado")
+
+
 __all__ = [
     "CancelMode",
     "CaracteristicaReadSchema",
@@ -211,4 +235,6 @@ __all__ = [
     "LimiteRegistroResponse",
     "UsoHistorialResponse",
     "CambiarPlanRequest",
+    "FeatureStatusSchema",
+    "SuscripcionEstadoResponse",
 ]

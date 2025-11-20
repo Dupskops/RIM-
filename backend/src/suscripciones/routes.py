@@ -144,16 +144,17 @@ async def get_my_suscripcion(
     suscripcion = await use_case.execute(usuario_id=int(current_user.id))
     
     if not suscripcion:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No tienes una suscripción activa. Contacta con soporte."
-        )
+        from src.shared.exceptions import NotFoundError
+        raise NotFoundError("No tienes una suscripción activa. Contacta con soporte.")
     
     return ApiResponse(
         success=True,
         message="Suscripción activa obtenida",
         data=suscripcion
     )
+
+
+
 
 
 @router.get(

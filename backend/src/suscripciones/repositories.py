@@ -6,7 +6,7 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Suscripcion, Plan
+from .models import Suscripcion, Plan, Caracteristica
 
 
 class SuscripcionRepository:
@@ -77,8 +77,23 @@ class PlanesRepository:
         return res.scalars().first()
 
 
+class CaracteristicaRepository:
+    """Repositorio para operaciones CRUD de características."""
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_all(self) -> Sequence[Caracteristica]:
+        """Retorna todas las características disponibles."""
+
+        stmt = select(Caracteristica)
+        res = await self.session.execute(stmt)
+        return res.scalars().all()
+
+
 __all__ = [
     "SuscripcionRepository",
     "PlanesRepository",
+    "CaracteristicaRepository",
 ]
 

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Caracteristica, UsoCaracteristica
 from .services import LimiteService, SuscripcionService
-from .repositories import PlanesRepository, SuscripcionRepository
+from .repositories import PlanesRepository, SuscripcionRepository, CaracteristicaRepository
 from .schemas import (
     PlanReadSchema,
     SuscripcionReadSchema,
@@ -20,6 +20,7 @@ from .schemas import (
     LimiteRegistroResponse,
     CaracteristicaReadSchema,
     UsoHistorialResponse,
+    FeatureStatusSchema,
 )
 
 import logging
@@ -85,9 +86,11 @@ class GetMySuscripcionUseCase:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.suscripcion_repo = SuscripcionRepository(session)
+        self.caracteristica_repo = CaracteristicaRepository(session)
+        self.limite_service = LimiteService(session)
 
     async def execute(self, usuario_id: int) -> Optional[SuscripcionReadSchema]:
-        """Retorna la suscripción activa del usuario.
+        """Retorna la suscripción activa del usuario con estado de características.
         
         Args:
             usuario_id: ID del usuario
@@ -117,6 +120,45 @@ class GetMySuscripcionUseCase:
                 periodo_facturacion=suscripcion.plan.periodo_facturacion.value if suscripcion.plan.periodo_facturacion else None,
                 caracteristicas=caracteristicas_list,
             )
+
+        # --- Lógica de Estado de Características (Merged) ---
+        caracteristicas_all = await self.caracteristica_repo.get_all()
+        features_status: List[FeatureStatusSchema] = []
+        
+        es_pro = suscripcion.plan.nombre_plan.lower() != "free" if suscripcion.plan else False
+        
+        for carac in caracteristicas_all:
+            # Obtener uso actual
+            estado_limite = await self.limite_service.check_limite(usuario_id, carac.clave_funcion)
+            
+            uso_actual = estado_limite["usos_realizados"]
+            limite_actual = estado_limite["limite"]
+            limite_pro = carac.limite_pro
+            
+            # Generar mensaje de upsell
+            upsell_msg = None
+            if not es_pro:
+                is_upgrade = False
+                if carac.limite_free is not None:
+                    if limite_pro is None:
+                        is_upgrade = True
+                    elif limite_pro > carac.limite_free:
+                        is_upgrade = True
+                
+                if is_upgrade:
+                    if limite_pro is None:
+                        upsell_msg = "Mejora a Pro para uso ilimitado"
+                    else:
+                        upsell_msg = f"Mejora a Pro para obtener {limite_pro} usos"
+
+            features_status.append(FeatureStatusSchema(
+                caracteristica=carac.clave_funcion,
+                descripcion=carac.descripcion,
+                uso_actual=uso_actual,
+                limite_actual=limite_actual,
+                limite_pro=limite_pro,
+                upsell_message=upsell_msg
+            ))
         
         return SuscripcionReadSchema(
             id=suscripcion.id,
@@ -125,6 +167,7 @@ class GetMySuscripcionUseCase:
             fecha_inicio=suscripcion.fecha_inicio,
             fecha_fin=suscripcion.fecha_fin,
             estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
+            features_status=features_status,
         )
 
 
