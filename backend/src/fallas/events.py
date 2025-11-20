@@ -33,7 +33,7 @@ class FallaDetectadaEvent:
     requiere_atencion_inmediata: bool
     usuario_id: int  # 0 si es detección automática
     origen: str  # "sensor", "ml", "manual"
-    timestamp: datetime = None
+    timestamp: Optional[datetime]
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -73,7 +73,7 @@ class FallaActualizadaEvent:
     estado_anterior: str
     estado_nuevo: str
     usuario_id: int
-    timestamp: datetime = None
+    timestamp: Optional[datetime]
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -107,7 +107,7 @@ class FallaResueltaEvent:
     costo_real: float  # 0.0 en v2.3 (se maneja en mantenimientos)
     dias_resolucion: int
     usuario_id: int
-    timestamp: datetime = None
+    timestamp: Optional[datetime]
     
     def __post_init__(self):
         if self.timestamp is None:

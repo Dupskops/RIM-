@@ -4,6 +4,9 @@ Capa de acceso a datos siguiendo patrón Repository.
 
 MVP v2.3 - Actualizado para alineación con CREATE_TABLES_MVP_V2.2.sql
 """
+from typing import Optional, List
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import select, func, and_, or_
 from typing import Optional, List, Dict
 from datetime import datetime, timedelta, date, timezone
 from sqlalchemy import select, func, and_
