@@ -9,22 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as RegisterRouteImport } from './routes/register'
-import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteRouteImport } from './routes/app/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
+import { Route as AuthRegisterRouteImport } from './routes/auth/register'
+import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AppNotificacionesRouteImport } from './routes/app/notificaciones'
+import { Route as AppMiPerfilRouteImport } from './routes/app/miPerfil'
+import { Route as AppHistorialRouteImport } from './routes/app/historial'
+import { Route as AppGarajeRouteImport } from './routes/app/garaje'
+import { Route as AppDiagnosticoRouteImport } from './routes/app/diagnostico'
+import { Route as AppChatbotRouteImport } from './routes/app/chatbot'
 
-const RegisterRoute = RegisterRouteImport.update({
-  id: '/register',
-  path: '/register',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AppRouteRoute = AppRouteRouteImport.update({
   id: '/app',
   path: '/app',
@@ -40,59 +36,136 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AuthRegisterRoute = AuthRegisterRouteImport.update({
+  id: '/auth/register',
+  path: '/auth/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthLoginRoute = AuthLoginRouteImport.update({
+  id: '/auth/login',
+  path: '/auth/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppNotificacionesRoute = AppNotificacionesRouteImport.update({
+  id: '/notificaciones',
+  path: '/notificaciones',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppMiPerfilRoute = AppMiPerfilRouteImport.update({
+  id: '/miPerfil',
+  path: '/miPerfil',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppHistorialRoute = AppHistorialRouteImport.update({
+  id: '/historial',
+  path: '/historial',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppGarajeRoute = AppGarajeRouteImport.update({
+  id: '/garaje',
+  path: '/garaje',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppDiagnosticoRoute = AppDiagnosticoRouteImport.update({
+  id: '/diagnostico',
+  path: '/diagnostico',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppChatbotRoute = AppChatbotRouteImport.update({
+  id: '/chatbot',
+  path: '/chatbot',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
+  '/app/chatbot': typeof AppChatbotRoute
+  '/app/diagnostico': typeof AppDiagnosticoRoute
+  '/app/garaje': typeof AppGarajeRoute
+  '/app/historial': typeof AppHistorialRoute
+  '/app/miPerfil': typeof AppMiPerfilRoute
+  '/app/notificaciones': typeof AppNotificacionesRoute
+  '/auth/login': typeof AuthLoginRoute
+  '/auth/register': typeof AuthRegisterRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
+  '/app/chatbot': typeof AppChatbotRoute
+  '/app/diagnostico': typeof AppDiagnosticoRoute
+  '/app/garaje': typeof AppGarajeRoute
+  '/app/historial': typeof AppHistorialRoute
+  '/app/miPerfil': typeof AppMiPerfilRoute
+  '/app/notificaciones': typeof AppNotificacionesRoute
+  '/auth/login': typeof AuthLoginRoute
+  '/auth/register': typeof AuthRegisterRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
+  '/app/chatbot': typeof AppChatbotRoute
+  '/app/diagnostico': typeof AppDiagnosticoRoute
+  '/app/garaje': typeof AppGarajeRoute
+  '/app/historial': typeof AppHistorialRoute
+  '/app/miPerfil': typeof AppMiPerfilRoute
+  '/app/notificaciones': typeof AppNotificacionesRoute
+  '/auth/login': typeof AuthLoginRoute
+  '/auth/register': typeof AuthRegisterRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/login' | '/register' | '/app/'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/app/chatbot'
+    | '/app/diagnostico'
+    | '/app/garaje'
+    | '/app/historial'
+    | '/app/miPerfil'
+    | '/app/notificaciones'
+    | '/auth/login'
+    | '/auth/register'
+    | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/register' | '/app'
-  id: '__root__' | '/' | '/app' | '/login' | '/register' | '/app/'
+  to:
+    | '/'
+    | '/app/chatbot'
+    | '/app/diagnostico'
+    | '/app/garaje'
+    | '/app/historial'
+    | '/app/miPerfil'
+    | '/app/notificaciones'
+    | '/auth/login'
+    | '/auth/register'
+    | '/app'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/app/chatbot'
+    | '/app/diagnostico'
+    | '/app/garaje'
+    | '/app/historial'
+    | '/app/miPerfil'
+    | '/app/notificaciones'
+    | '/auth/login'
+    | '/auth/register'
+    | '/app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRouteRoute: typeof AppRouteRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  RegisterRoute: typeof RegisterRoute
+  AuthLoginRoute: typeof AuthLoginRoute
+  AuthRegisterRoute: typeof AuthRegisterRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/register': {
-      id: '/register'
-      path: '/register'
-      fullPath: '/register'
-      preLoaderRoute: typeof RegisterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/app': {
       id: '/app'
       path: '/app'
@@ -114,14 +187,82 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/auth/register': {
+      id: '/auth/register'
+      path: '/auth/register'
+      fullPath: '/auth/register'
+      preLoaderRoute: typeof AuthRegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/login': {
+      id: '/auth/login'
+      path: '/auth/login'
+      fullPath: '/auth/login'
+      preLoaderRoute: typeof AuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/notificaciones': {
+      id: '/app/notificaciones'
+      path: '/notificaciones'
+      fullPath: '/app/notificaciones'
+      preLoaderRoute: typeof AppNotificacionesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/miPerfil': {
+      id: '/app/miPerfil'
+      path: '/miPerfil'
+      fullPath: '/app/miPerfil'
+      preLoaderRoute: typeof AppMiPerfilRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/historial': {
+      id: '/app/historial'
+      path: '/historial'
+      fullPath: '/app/historial'
+      preLoaderRoute: typeof AppHistorialRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/garaje': {
+      id: '/app/garaje'
+      path: '/garaje'
+      fullPath: '/app/garaje'
+      preLoaderRoute: typeof AppGarajeRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/diagnostico': {
+      id: '/app/diagnostico'
+      path: '/diagnostico'
+      fullPath: '/app/diagnostico'
+      preLoaderRoute: typeof AppDiagnosticoRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/app/chatbot': {
+      id: '/app/chatbot'
+      path: '/chatbot'
+      fullPath: '/app/chatbot'
+      preLoaderRoute: typeof AppChatbotRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
 interface AppRouteRouteChildren {
+  AppChatbotRoute: typeof AppChatbotRoute
+  AppDiagnosticoRoute: typeof AppDiagnosticoRoute
+  AppGarajeRoute: typeof AppGarajeRoute
+  AppHistorialRoute: typeof AppHistorialRoute
+  AppMiPerfilRoute: typeof AppMiPerfilRoute
+  AppNotificacionesRoute: typeof AppNotificacionesRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
+  AppChatbotRoute: AppChatbotRoute,
+  AppDiagnosticoRoute: AppDiagnosticoRoute,
+  AppGarajeRoute: AppGarajeRoute,
+  AppHistorialRoute: AppHistorialRoute,
+  AppMiPerfilRoute: AppMiPerfilRoute,
+  AppNotificacionesRoute: AppNotificacionesRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
@@ -132,8 +273,8 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRouteRoute: AppRouteRouteWithChildren,
-  LoginRoute: LoginRoute,
-  RegisterRoute: RegisterRoute,
+  AuthLoginRoute: AuthLoginRoute,
+  AuthRegisterRoute: AuthRegisterRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
