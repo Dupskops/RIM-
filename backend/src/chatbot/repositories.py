@@ -111,7 +111,7 @@ class ConversacionRepository:
 
     async def actualizar_actividad(self, conversacion: Conversacion) -> None:
         """Actualiza la última actividad de una conversación."""
-        conversacion.ultima_actividad = datetime.now(timezone.utc)
+        conversacion.ultima_actividad = datetime.utcnow()
         conversacion.total_mensajes += 1
         await self.db.commit()
 

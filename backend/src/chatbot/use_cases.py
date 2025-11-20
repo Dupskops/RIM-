@@ -258,6 +258,12 @@ class SendMessageUseCase:
         Returns:
             Tuple con (respuesta, conversacion, mensaje_usuario, mensaje_asistente)
         """
+        import time
+        import logging
+        logger = logging.getLogger(__name__)
+        start_time = time.time()
+        logger.info(f"[DEBUG] SendMessageUseCase.execute iniciado. Usuario: {usuario_id}")
+
         # Validar mensaje usando validators
         if not validators.validate_message_length(message):
             raise ValueError("El mensaje debe tener entre 1 y 2000 caracteres")

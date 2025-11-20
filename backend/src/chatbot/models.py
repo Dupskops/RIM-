@@ -15,8 +15,8 @@ from src.shared.models import BaseModel
 
 class RoleMensaje(str, enum.Enum):
     """Rol del mensaje en la conversación."""
-    USER = "user"
-    ASSISTANT = "assistant"
+    user = "user"
+    assistant = "assistant"
 
 
 class TipoPrompt(str, enum.Enum):
@@ -24,23 +24,23 @@ class TipoPrompt(str, enum.Enum):
     Tipo de prompt usado para generar la respuesta.
     
     MVP v2.3 - Tipos expandidos:
-    - DIAGNOSTIC: Diagnóstico de problemas mecánicos
-    - MAINTENANCE: Recomendaciones de mantenimiento
-    - EXPLANATION: Explicaciones educativas sobre motocicletas
-    - ML_ANALYSIS: Análisis ML completo de componentes (Flujo #7)
-    - TRIP_ANALYSIS: Análisis de viajes y patrones de conducción (Flujo #8)
-    - SENSOR_READING: Interpretación de lecturas de sensores en tiempo real (Flujo #3)
-    - FREEMIUM: Comparativas de planes y funcionalidades (Flujo #9)
-    - GENERAL: Conversación general
+    - diagnostic: Diagnóstico de problemas mecánicos
+    - maintenance: Recomendaciones de mantenimiento
+    - explanation: Explicaciones educativas sobre motocicletas
+    - ml_analysis: Análisis ML completo de componentes (Flujo #7)
+    - trip_analysis: Análisis de viajes y patrones de conducción (Flujo #8)
+    - sensor_reading: Interpretación de lecturas de sensores en tiempo real (Flujo #3)
+    - freemium: Comparativas de planes y funcionalidades (Flujo #9)
+    - general: Conversación general
     """
-    DIAGNOSTIC = "diagnostic"
-    MAINTENANCE = "maintenance"
-    EXPLANATION = "explanation"
-    ML_ANALYSIS = "ml_analysis"
-    TRIP_ANALYSIS = "trip_analysis"
-    SENSOR_READING = "sensor_reading"
-    FREEMIUM = "freemium"
-    GENERAL = "general"
+    diagnostic = "diagnostic"
+    maintenance = "maintenance"
+    explanation = "explanation"
+    ml_analysis = "ml_analysis"
+    trip_analysis = "trip_analysis"
+    sensor_reading = "sensor_reading"
+    freemium = "freemium"
+    general = "general"
 
 
 class Conversacion(BaseModel):
@@ -171,7 +171,7 @@ class Mensaje(BaseModel):
     # Tipo de prompt (solo para mensajes del assistant)
     tipo_prompt: Mapped[TipoPrompt] = mapped_column(
         SQLEnum(TipoPrompt, native_enum=True, name="tipo_prompt"),
-        default=TipoPrompt.GENERAL,
+        default=TipoPrompt.general,
         nullable=True,
         comment="Tipo de prompt usado: diagnostic, maintenance, explanation, general"
     )
@@ -212,9 +212,9 @@ class Mensaje(BaseModel):
     @property
     def es_usuario(self) -> bool:
         """Retorna True si el mensaje fue enviado por el usuario."""
-        return self.role == RoleMensaje.USER
+        return self.role == RoleMensaje.user
     
     @property
     def es_asistente(self) -> bool:
         """Retorna True si el mensaje fue generado por el asistente."""
-        return self.role == RoleMensaje.ASSISTANT
+        return self.role == RoleMensaje.assistant

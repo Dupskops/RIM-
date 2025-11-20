@@ -9,7 +9,7 @@ from src.chatbot.models import TipoPrompt
 def generate_conversation_title(
     user_message: str, 
     assistant_response: str, 
-    tipo_prompt: TipoPrompt = TipoPrompt.GENERAL,
+    tipo_prompt: TipoPrompt = TipoPrompt.general,
     max_length: int = 50
 ) -> str:
     """
@@ -60,10 +60,10 @@ def generate_conversation_title(
     
     # Prefijos según tipo de prompt
     prefix_map = {
-        TipoPrompt.DIAGNOSTIC: "Problema",
-        TipoPrompt.MAINTENANCE: "Mantenimiento",
-        TipoPrompt.EXPLANATION: "Info",
-        TipoPrompt.GENERAL: "Consulta"
+        TipoPrompt.diagnostic: "Problema",
+        TipoPrompt.maintenance: "Mantenimiento",
+        TipoPrompt.explanation: "Info",
+        TipoPrompt.general: "Consulta"
     }
     
     prefix = prefix_map.get(tipo_prompt, "Consulta")

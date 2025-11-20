@@ -160,7 +160,7 @@ class ChatbotService:
         
         mensaje = Mensaje(
             conversacion_id=conversacion_id,
-            role=RoleMensaje.USER,
+            role=RoleMensaje.user.value,  # Fix: Use value string
             contenido=contenido
         )
         
@@ -170,7 +170,7 @@ class ChatbotService:
         self,
         conversacion_id: int,
         contenido: str,
-        tipo_prompt: TipoPrompt = TipoPrompt.GENERAL,
+        tipo_prompt: TipoPrompt = TipoPrompt.general,
         tokens_usados: int = 0,
         tiempo_respuesta_ms: int = 0,
         modelo_usado: str = "unknown"
@@ -191,11 +191,14 @@ class ChatbotService:
         Returns:
             Mensaje creado con métricas
         """
+        # Asegurar que tipo_prompt sea el valor string
+        tipo_prompt_val = tipo_prompt.value if isinstance(tipo_prompt, TipoPrompt) else tipo_prompt
+
         mensaje = Mensaje(
             conversacion_id=conversacion_id,
-            role=RoleMensaje.ASSISTANT,
+            role=RoleMensaje.assistant.value,  # Fix: Use value string
             contenido=contenido,
-            tipo_prompt=tipo_prompt,
+            tipo_prompt=tipo_prompt_val,
             tokens_usados=tokens_usados,
             tiempo_respuesta_ms=tiempo_respuesta_ms,
             modelo_usado=modelo_usado
@@ -225,6 +228,11 @@ class ChatbotService:
         Raises:
             ValueError: Si el contexto es inválido
         """
+        import time
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] ChatbotService.process_message iniciado. Message: {message[:50]}...")
+        start_time = time.time()
         # Validar contexto si se proporciona
         if context and not validators.validate_context_data(context):
             raise ValueError("El contexto proporcionado es inválido o excede el tamaño máximo (50KB)")
@@ -351,9 +359,8 @@ class ChatbotService:
             tiempo_respuesta_ms=metrics.get("tiempo_respuesta_ms", 0) if metrics else 0,
             modelo_usado=metrics.get("modelo_usado", "unknown") if metrics else "unknown"
         )
-        
+
         # 6. Actualizar conversación
-        await self.conversacion_repo.actualizar_actividad(conversacion)
         
         # 7. Generar título automáticamente si es el primer mensaje (streaming)
         if not conversacion.titulo:
@@ -386,7 +393,7 @@ class ChatbotService:
             "predicciones", "análisis predictivo", "shap"
         ]
         if any(keyword in message_lower for keyword in ml_keywords):
-            return TipoPrompt.ML_ANALYSIS
+            return TipoPrompt.ml_analysis
         
         # Keywords para análisis de viajes
         trip_keywords = [
@@ -395,7 +402,7 @@ class ChatbotService:
             "patrón de conducción", "kilometraje del viaje"
         ]
         if any(keyword in message_lower for keyword in trip_keywords):
-            return TipoPrompt.TRIP_ANALYSIS
+            return TipoPrompt.trip_analysis
         
         # Keywords para sensores (lecturas en tiempo real)
         sensor_keywords = [
@@ -404,7 +411,7 @@ class ChatbotService:
             "estado del componente", "dashboard", "panel de instrumentos"
         ]
         if any(keyword in message_lower for keyword in sensor_keywords):
-            return TipoPrompt.SENSOR_READING
+            return TipoPrompt.sensor_reading
         
         # Keywords para Freemium (comparativas y planes)
         freemium_keywords = [
@@ -413,7 +420,7 @@ class ChatbotService:
             "precio", "suscripción", "upgrade", "funcionalidades"
         ]
         if any(keyword in message_lower for keyword in freemium_keywords):
-            return TipoPrompt.FREEMIUM
+            return TipoPrompt.freemium
         
         # Keywords para diagnóstico
         diagnostic_keywords = [
@@ -421,7 +428,7 @@ class ChatbotService:
             "humo", "temperatura alta", "sobrecalienta", "no arranca", "se apaga"
         ]
         if any(keyword in message_lower for keyword in diagnostic_keywords):
-            return TipoPrompt.DIAGNOSTIC
+            return TipoPrompt.diagnostic
         
         # Keywords para mantenimiento
         maintenance_keywords = [
@@ -429,7 +436,7 @@ class ChatbotService:
             "pastillas", "freno", "cadena", "neumático", "revisión", "cuándo cambiar"
         ]
         if any(keyword in message_lower for keyword in maintenance_keywords):
-            return TipoPrompt.MAINTENANCE
+            return TipoPrompt.maintenance
         
         # Keywords para explicación
         explanation_keywords = [
@@ -437,10 +444,10 @@ class ChatbotService:
             "diferencia entre", "por qué", "qué significa"
         ]
         if any(keyword in message_lower for keyword in explanation_keywords):
-            return TipoPrompt.EXPLANATION
+            return TipoPrompt.explanation
         
         # Por defecto: general
-        return TipoPrompt.GENERAL
+        return TipoPrompt.general
 
     async def _build_prompts(
         self,
@@ -480,7 +487,7 @@ class ChatbotService:
             ])
         
         # Seleccionar system prompt y construir user prompt según tipo
-        if tipo_prompt == TipoPrompt.DIAGNOSTIC:
+        if tipo_prompt == TipoPrompt.diagnostic:
             system_prompt = DIAGNOSTIC_SYSTEM_PROMPT
             if context.get("datos_sensores"):
                 user_prompt = build_diagnostic_prompt(
@@ -493,7 +500,7 @@ class ChatbotService:
             else:
                 user_prompt = build_quick_diagnostic_prompt(message)
         
-        elif tipo_prompt == TipoPrompt.MAINTENANCE:
+        elif tipo_prompt == TipoPrompt.maintenance:
             system_prompt = MAINTENANCE_SYSTEM_PROMPT
             if context.get("kilometraje_actual"):
                 user_prompt = build_maintenance_recommendation_prompt(
@@ -506,14 +513,14 @@ class ChatbotService:
             else:
                 user_prompt = f"Pregunta de mantenimiento: {message}"
         
-        elif tipo_prompt == TipoPrompt.EXPLANATION:
+        elif tipo_prompt == TipoPrompt.explanation:
             system_prompt = EXPLANATION_SYSTEM_PROMPT
             user_prompt = build_explanation_prompt(
                 pregunta=message,
                 contexto_usuario=context
             )
         
-        elif tipo_prompt == TipoPrompt.ML_ANALYSIS:
+        elif tipo_prompt == TipoPrompt.ml_analysis:
             system_prompt = ML_ANALYSIS_SYSTEM_PROMPT
             # Determinar si es análisis rápido o completo
             if context.get("quick_summary"):
@@ -534,7 +541,7 @@ class ChatbotService:
                     es_usuario_pro=context.get("es_usuario_pro", False)
                 )
         
-        elif tipo_prompt == TipoPrompt.TRIP_ANALYSIS:
+        elif tipo_prompt == TipoPrompt.trip_analysis:
             system_prompt = TRIP_ANALYSIS_SYSTEM_PROMPT
             user_prompt = build_trip_summary_prompt(
                 viaje=context.get("viaje", {}),
@@ -543,7 +550,7 @@ class ChatbotService:
                 es_usuario_pro=context.get("es_usuario_pro", False)
             )
         
-        elif tipo_prompt == TipoPrompt.SENSOR_READING:
+        elif tipo_prompt == TipoPrompt.sensor_reading:
             system_prompt = SENSOR_READING_SYSTEM_PROMPT
             # Determinar si es dashboard completo o sensor individual
             if context.get("dashboard"):
@@ -564,7 +571,7 @@ class ChatbotService:
                     componente_nombre=context.get("componente_nombre", "Motor")
                 )
         
-        elif tipo_prompt == TipoPrompt.FREEMIUM:
+        elif tipo_prompt == TipoPrompt.freemium:
             system_prompt = FREEMIUM_COMPARISON_SYSTEM_PROMPT
             # Determinar si es límite alcanzado o comparación de planes
             if context.get("limite_alcanzado"):

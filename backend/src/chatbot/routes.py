@@ -65,6 +65,12 @@ async def send_message(
     - **context**: Contexto adicional (sensores, fallas, etc.)
     - **stream**: Si True, retorna streaming (usar SSE)
     """
+    import time
+    import logging
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    logger.info(f"[DEBUG] Recibida petición POST /chat. Message len: {len(data.message)}")
+
     # Si se solicita streaming, usar endpoint de streaming
     if data.stream:
         raise HTTPException(
@@ -79,7 +85,7 @@ async def send_message(
     if data.tipo_prompt:
         try:
             from src.chatbot.models import TipoPrompt
-            tipo_prompt_enum = TipoPrompt(data.tipo_prompt.upper())
+            tipo_prompt_enum = TipoPrompt(data.tipo_prompt.lower())
         except (ValueError, AttributeError):
             pass  # Si no es válido, se detectará automáticamente
     
@@ -96,10 +102,8 @@ async def send_message(
         chat_response = schemas.ChatResponse(
             message=response,
             conversation_id=conversacion.conversation_id,
-            mensaje_id=mensaje_asistente.id,
-            tokens_usados=mensaje_asistente.tokens_usados,
-            tiempo_respuesta_ms=mensaje_asistente.tiempo_respuesta_ms,
-            modelo_usado=mensaje_asistente.modelo_usado,
+            mensaje_usuario_id=mensaje_usuario.id,
+            mensaje_asistente_id=mensaje_asistente.id,
             tipo_prompt=mensaje_asistente.tipo_prompt
         )
         
@@ -133,7 +137,7 @@ async def send_message_stream(
     if data.tipo_prompt:
         try:
             from src.chatbot.models import TipoPrompt
-            tipo_prompt_enum = TipoPrompt(data.tipo_prompt.upper())
+            tipo_prompt_enum = TipoPrompt(data.tipo_prompt.lower())
         except (ValueError, AttributeError):
             pass  # Si no es válido, se detectará automáticamente
     
