@@ -144,12 +144,14 @@ class OllamaProvider:
         
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                logger.info(f"Generando respuesta con {self.model_name} (max_tokens={max_tokens})")
+                logger.info(f"[DEBUG] Enviando request a Ollama: {self.base_url}/api/generate. Model: {self.model_name}")
+                req_start = time.time()
                 
                 async with session.post(
                     f"{self.base_url}/api/generate",
                     json=payload
                 ) as resp:
+                    logger.info(f"[DEBUG] Respuesta recibida de Ollama en {time.time() - req_start:.4f}s. Status: {resp.status}")
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.error(f"Error en Ollama: {resp.status} - {error_text}")
@@ -170,7 +172,7 @@ class OllamaProvider:
                             "tokens_usados": result.get("eval_count", 0),  # Tokens generados
                             "tokens_prompt": result.get("prompt_eval_count", 0),  # Tokens del prompt
                             "tiempo_respuesta_ms": tiempo_respuesta_ms,
-                            "modelo_usado": result.get("model", self.model),
+                            "modelo_usado": result.get("model", self.model_name),
                             "total_duration_ns": result.get("total_duration", 0),  # Duración total en nanosegundos
                         }
                         return response_text, metrics
