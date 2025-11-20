@@ -603,6 +603,21 @@ Responde de forma clara, profesional y útil. Si no conoces la respuesta, admít
 MENSAJE ACTUAL DEL USUARIO:
 {user_prompt}"""
         
+        # Agregar contexto de moto si está disponible
+        if context.get('moto_data'):
+            from src.chatbot.formatters import format_moto_context_for_llm, format_user_plan_note
+            
+            # Formatear datos de la moto para el LLM
+            moto_context_text = format_moto_context_for_llm(context['moto_data'])
+            
+            # Agregar al system prompt
+            system_prompt += f"\n\n{moto_context_text}"
+            
+            # Agregar nota sobre el plan del usuario
+            user_plan = context['moto_data'].get('user_plan', 'free')
+            plan_note = format_user_plan_note(user_plan)
+            system_prompt += plan_note
+        
         return system_prompt, user_prompt
 
     async def get_conversacion_with_messages(

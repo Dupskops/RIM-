@@ -72,12 +72,13 @@ class ConversacionRepository:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def get_activas(self, skip: int = 0, limit: int = 100) -> List[Conversacion]:
-        """Obtiene conversaciones activas."""
+    async def get_activas(self, usuario_id: int, skip: int = 0, limit: int = 100) -> List[Conversacion]:
+        """Obtiene conversaciones activas de un usuario."""
         result = await self.db.execute(
             select(Conversacion)
             .where(
                 and_(
+                    Conversacion.usuario_id == usuario_id,
                     Conversacion.activa == True,
                     Conversacion.deleted_at.is_(None)
                 )

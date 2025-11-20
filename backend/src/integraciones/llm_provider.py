@@ -183,7 +183,9 @@ class OllamaProvider:
             logger.error(f"Error de conexión con Ollama: {e}")
             raise
         except Exception as e:
+            import traceback
             logger.error(f"Error inesperado generando respuesta: {e}")
+            logger.error(f"Traceback completo: {traceback.format_exc()}")
             raise
     
     async def generate_stream(
@@ -432,8 +434,10 @@ def get_llm_provider() -> OllamaProvider:
     global _ollama_provider
     
     if _ollama_provider is None:
-        _ollama_provider = OllamaProvider()
-        logger.info("Instancia singleton de OllamaProvider creada")
+        from src.config.settings import settings
+        timeout = getattr(settings, 'OLLAMA_TIMEOUT', 180)
+        _ollama_provider = OllamaProvider(timeout=timeout)
+        logger.info(f"Instancia singleton de OllamaProvider creada con timeout={timeout}s")
     
     return _ollama_provider
 

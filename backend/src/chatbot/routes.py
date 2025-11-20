@@ -89,6 +89,26 @@ async def send_message(
         except (ValueError, AttributeError):
             pass  # Si no es válido, se detectará automáticamente
     
+    # Cargar contexto de moto automáticamente si moto_id está presente
+    context = data.context or {}
+    if data.moto_id:
+        try:
+            from src.chatbot.context_builder import build_moto_context
+            
+            # Construir contexto de la moto según el plan del usuario
+            moto_context = await build_moto_context(
+                moto_id=data.moto_id,
+                user_id=current_user.id,
+                db=session
+            )
+            
+            # Agregar al contexto
+            context['moto_data'] = moto_context
+            logger.info(f"[DEBUG] Contexto de moto cargado. Plan: {moto_context.get('user_plan')}")
+        except Exception as e:
+            # Si falla la carga de contexto, continuar sin él
+            logger.warning(f"Error cargando contexto de moto: {e}")
+    
     try:
         response, conversacion, mensaje_usuario, mensaje_asistente = await use_case.execute(
             usuario_id=current_user.id,
@@ -96,7 +116,7 @@ async def send_message(
             moto_id=data.moto_id,
             conversation_id=data.conversation_id,
             tipo_prompt=tipo_prompt_enum,
-            context=getattr(data, 'context', None)
+            context=context
         )
         
         chat_response = schemas.ChatResponse(
