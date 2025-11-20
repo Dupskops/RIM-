@@ -1,304 +1,319 @@
 """
-Rutas REST API para el módulo de fallas.
-Endpoints para gestión de fallas detectadas en motos.
+Rutas REST API para el módulo de fallas (MVP v2.3).
+
+Endpoints:
+- POST /fallas - Crear nueva falla
+- GET /fallas/{id} - Obtener falla por ID
+- GET /fallas/codigo/{codigo} - Obtener falla por código
+- GET /motos/{moto_id}/fallas - Listar fallas de una moto
+- PATCH /fallas/{id} - Actualizar campos editables
+- POST /fallas/{id}/diagnosticar - Mover a EN_REPARACION
+- POST /fallas/{id}/resolver - Mover a RESUELTA
+- GET /motos/{moto_id}/fallas/stats - Estadísticas (Premium)
 """
-from typing import Annotated
-from fastapi import APIRouter, Depends, Query, status
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .schemas import (
-    FallaCreate,
-    FallaMLCreate,
-    FallaUpdate,
-    FallaDiagnosticar,
-    FallaResolver,
-    FallaResponse,
-    FallaStatsResponse,
-    FallaFilterParams
-)
+from src.config.dependencies import get_db, get_current_user
+from src.shared.base_models import PaginationParams
+from src.shared.exceptions import ResourceNotFoundException, ValidationException
+from ..auth.models import Usuario
+
 from .use_cases import (
     CreateFallaUseCase,
-    CreateFallaMLUseCase,
+    GetFallaByIdUseCase,
+    GetFallaByCodigoUseCase,
+    ListFallasByMotoUseCase,
     UpdateFallaUseCase,
     DiagnosticarFallaUseCase,
     ResolverFallaUseCase,
-    GetFallaUseCase,
-    ListFallasByMotoUseCase,
-    GetFallaStatsUseCase,
-    DeleteFallaUseCase
+    GetFallaStatsUseCase
 )
-from ..config.database import get_db
-from ..shared.middleware import FeatureChecker
-from ..shared.constants import Feature
-from ..shared.base_models import (
-    ApiResponse,
-    PaginatedResponse,
-    SuccessResponse,
-    PaginationParams,
-    create_success_response,
-    create_paginated_response
+from .schemas import (
+    FallaCreate,
+    FallaUpdate,
+    FallaResponse,
+    FallaListResponse,
+    FallaStatsResponse,
+    FallaFilterParams
 )
 
+router = APIRouter(prefix="/fallas", tags=["Fallas"])
 
-router = APIRouter()
 
+# =============================================================================
+# CREAR FALLA
+# =============================================================================
 
 @router.post(
-    "/",
-    response_model=ApiResponse[FallaResponse],
+    "",
+    response_model=FallaResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Crear nueva falla",
-    description="Registra una nueva falla detectada en una moto"
+    description="Crea una nueva falla (detección automática o reporte manual)"
 )
 async def create_falla(
     data: FallaCreate,
-    db: AsyncSession = Depends(get_db)
-) -> ApiResponse[FallaResponse]:
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
     """
-    Crea una nueva falla.
+    Crear una nueva falla.
     
     - **moto_id**: ID de la moto
-    - **tipo**: Tipo de falla (sobrecalentamiento, bateria_baja, etc.)
-    - **titulo**: Título descriptivo
-    - **descripcion**: Descripción detallada
+    - **componente_id**: ID del componente afectado
+    - **tipo**: Tipo de falla (string libre, ej: "sobrecalentamiento")
+    - **descripcion**: Descripción detallada (opcional)
     - **severidad**: baja, media, alta, critica
-    """
-    use_case = CreateFallaUseCase(db)
-    falla = await use_case.execute(data)
-    return create_success_response(
-        message="Falla creada exitosamente",
-        data=falla
-    )
-
-
-@router.post(
-    "/ml",
-    response_model=ApiResponse[FallaResponse],
-    status_code=status.HTTP_201_CREATED,
-    summary="Crear falla detectada por ML/IA",
-    description="Registra una falla detectada automáticamente por modelos de Machine Learning"
-)
-async def create_falla_ml(
-    data: FallaMLCreate,
-    db: AsyncSession = Depends(get_db)
-) -> ApiResponse[FallaResponse]:
-    """
-    Crea una falla detectada por ML.
+    - **origen_deteccion**: sensor, ml, manual
     
-    Incluye información adicional como:
-    - **confianza_ml**: Nivel de confianza del modelo (0-1)
-    - **modelo_ml_usado**: Nombre del modelo
-    - **prediccion_ml**: Detalles de la predicción en JSON
+    Genera automáticamente:
+    - Código único (FL-YYYYMMDD-NNN)
+    - puede_conducir (según tipo y severidad)
+    - requiere_atencion_inmediata
+    - solucion_sugerida
     """
-    use_case = CreateFallaMLUseCase(db)
-    falla = await use_case.execute(data)
-    return create_success_response(
-        message="Falla detectada por IA creada exitosamente",
-        data=falla
-    )
+    try:
+        use_case = CreateFallaUseCase(db)
+        falla = await use_case.execute(data, usuario_id=current_user.id)
+        return falla
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
+
+# =============================================================================
+# OBTENER FALLA POR ID
+# =============================================================================
 
 @router.get(
     "/{falla_id}",
-    response_model=ApiResponse[FallaResponse],
-    summary="Obtener falla por ID",
-    description="Obtiene información detallada de una falla específica"
+    response_model=FallaResponse,
+    summary="Obtener falla por ID"
 )
 async def get_falla(
     falla_id: int,
-    db: AsyncSession = Depends(get_db)
-) -> ApiResponse[FallaResponse]:
-    """
-    Obtiene una falla por su ID.
-    
-    Retorna toda la información incluyendo:
-    - Datos de detección
-    - Diagnóstico (si existe)
-    - Resolución (si está resuelta)
-    - Costos estimados y reales
-    """
-    use_case = GetFallaUseCase(db)
-    falla = await use_case.execute(falla_id)
-    return create_success_response(
-        message="Falla obtenida exitosamente",
-        data=falla
-    )
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """Obtiene una falla por su ID."""
+    try:
+        use_case = GetFallaByIdUseCase(db)
+        falla = await use_case.execute(falla_id)
+        return falla
+    except ResourceNotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+
+# =============================================================================
+# OBTENER FALLA POR CÓDIGO
+# =============================================================================
 
 @router.get(
-    "/moto/{moto_id}",
-    response_model=PaginatedResponse[FallaResponse],
-    summary="Listar fallas de una moto",
-    description="Obtiene todas las fallas de una moto específica"
+    "/codigo/{codigo}",
+    response_model=FallaResponse,
+    summary="Obtener falla por código"
 )
-async def list_fallas_by_moto(
-    moto_id: int,
-    filters: Annotated[FallaFilterParams, Depends()],
-    pagination: Annotated[PaginationParams, Depends()],
-    db: AsyncSession = Depends(get_db)
-) -> PaginatedResponse[FallaResponse]:
+async def get_falla_by_codigo(
+    codigo: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
     """
-    Lista fallas de una moto.
+    Obtiene una falla por su código único.
     
-    Parámetros de filtro:
-    - **solo_activas**: true para solo fallas sin resolver
-    - **skip**: Paginación - registros a saltar
-    - **limit**: Paginación - máximo de registros
+    Ejemplo: FL-20251110-001
     """
-    # Forzar moto_id del path
-    filters.moto_id = moto_id
-    
-    use_case = ListFallasByMotoUseCase(db)
-    fallas, total = await use_case.execute(filters, pagination)
-    
-    return create_paginated_response(
-        message="Fallas obtenidas exitosamente",
-        data=fallas,
-        page=pagination.page,
-        per_page=pagination.per_page,
-        total_items=total
-    )
+    try:
+        use_case = GetFallaByCodigoUseCase(db)
+        falla = await use_case.execute(codigo)
+        return falla
+    except ResourceNotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+
+# =============================================================================
+# LISTAR FALLAS DE UNA MOTO
+# =============================================================================
+
+@router.get(
+    "/motos/{moto_id}",
+    response_model=dict,
+    summary="Listar fallas de una moto"
+)
+async def list_fallas(
+    moto_id: int,
+    solo_activas: bool = Query(False, description="Solo fallas no resueltas"),
+    skip: int = Query(0, ge=0, description="Offset"),
+    limit: int = Query(50, ge=1, le=100, description="Límite"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Lista las fallas de una moto con paginación.
+    
+    - **solo_activas**: Si es true, solo devuelve fallas no resueltas
+    - **skip/limit**: Para paginación
+    """
+    try:
+        filters = FallaFilterParams(moto_id=moto_id, solo_activas=solo_activas)
+        pagination = PaginationParams(offset=skip, limit=limit)
+        
+        use_case = ListFallasByMotoUseCase(db)
+        fallas, total = await use_case.execute(filters, pagination)
+        
+        return {
+            "items": [FallaListResponse.model_validate(f) for f in fallas],
+            "total": total,
+            "skip": skip,
+            "limit": limit
+        }
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# =============================================================================
+# ACTUALIZAR FALLA
+# =============================================================================
 
 @router.patch(
     "/{falla_id}",
-    response_model=ApiResponse[FallaResponse],
-    summary="Actualizar falla",
-    description="Actualiza información de una falla existente"
+    response_model=FallaResponse,
+    summary="Actualizar falla"
 )
 async def update_falla(
     falla_id: int,
     data: FallaUpdate,
-    db: AsyncSession = Depends(get_db)
-) -> ApiResponse[FallaResponse]:
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
     """
-    Actualiza una falla.
+    Actualiza campos editables de una falla.
     
-    Permite actualizar:
-    - Estado
-    - Severidad
-    - Solución aplicada
-    - Costo real
-    - Notas del técnico
+    Campos permitidos:
+    - descripcion
+    - severidad
+    - solucion_sugerida
+    - latitud/longitud
+    
+    Para cambiar el estado, usar endpoints específicos:
+    - POST /fallas/{id}/diagnosticar (DETECTADA -> EN_REPARACION)
+    - POST /fallas/{id}/resolver (EN_REPARACION -> RESUELTA)
     """
-    use_case = UpdateFallaUseCase(db)
-    falla = await use_case.execute(falla_id, data)
-    return create_success_response(
-        message="Falla actualizada exitosamente",
-        data=falla
-    )
+    try:
+        use_case = UpdateFallaUseCase(db)
+        falla = await use_case.execute(falla_id, data, usuario_id=current_user.id)
+        return falla
+    except ResourceNotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+
+# =============================================================================
+# DIAGNOSTICAR FALLA (DETECTADA -> EN_REPARACION)
+# =============================================================================
 
 @router.post(
     "/{falla_id}/diagnosticar",
-    response_model=ApiResponse[FallaResponse],
-    summary="Diagnosticar falla",
-    description="Marca una falla como diagnosticada con solución propuesta"
+    response_model=FallaResponse,
+    summary="Diagnosticar falla (mover a EN_REPARACION)"
 )
 async def diagnosticar_falla(
     falla_id: int,
-    data: FallaDiagnosticar,
-    db: AsyncSession = Depends(get_db)
-) -> ApiResponse[FallaResponse]:
+    solucion_sugerida: str = Query(..., min_length=10, description="Solución propuesta"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
     """
-    Diagnostica una falla.
+    Diagnostica una falla y la mueve a estado EN_REPARACION.
     
-    Establece:
-    - Solución sugerida
-    - Costo estimado
-    - Notas del técnico
-    - Cambia estado a "en_revision"
+    - Valida transición: DETECTADA -> EN_REPARACION
+    - Actualiza solucion_sugerida
+    - Emite evento FallaActualizada
+    
+    En v2.3, los datos de diagnóstico (costo estimado, notas técnico)
+    se manejan en la tabla `mantenimientos`.
     """
-    use_case = DiagnosticarFallaUseCase(db)
-    falla = await use_case.execute(falla_id, data)
-    return create_success_response(
-        message="Falla diagnosticada exitosamente",
-        data=falla
-    )
+    try:
+        use_case = DiagnosticarFallaUseCase(db)
+        falla = await use_case.execute(falla_id, solucion_sugerida, usuario_id=current_user.id)
+        return falla
+    except ResourceNotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+
+# =============================================================================
+# RESOLVER FALLA (EN_REPARACION -> RESUELTA)
+# =============================================================================
 
 @router.post(
     "/{falla_id}/resolver",
-    response_model=ApiResponse[FallaResponse],
-    summary="Resolver falla",
-    description="Marca una falla como resuelta"
+    response_model=FallaResponse,
+    summary="Resolver falla (mover a RESUELTA)"
 )
 async def resolver_falla(
     falla_id: int,
-    data: FallaResolver,
-    db: AsyncSession = Depends(get_db)
-) -> ApiResponse[FallaResponse]:
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
     """
-    Resuelve una falla.
+    Resuelve una falla marcándola como RESUELTA.
     
-    Registra:
-    - Solución aplicada
-    - Costo real
-    - Notas finales
-    - Fecha de resolución
-    - Cambia estado a "resuelta"
+    - Valida transición: EN_REPARACION -> RESUELTA
+    - Registra fecha_resolucion
+    - Calcula días de resolución
+    - Emite evento FallaResuelta
+    
+    En v2.3, los datos de resolución (solución aplicada, costo real)
+    se manejan en la tabla `mantenimientos`.
     """
-    use_case = ResolverFallaUseCase(db)
-    falla = await use_case.execute(falla_id, data)
-    return create_success_response(
-        message="Falla resuelta exitosamente",
-        data=falla
-    )
+    try:
+        use_case = ResolverFallaUseCase(db)
+        falla = await use_case.execute(falla_id, usuario_id=current_user.id)
+        return falla
+    except ResourceNotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+
+# =============================================================================
+# ESTADÍSTICAS (PREMIUM)
+# =============================================================================
 
 @router.get(
-    "/moto/{moto_id}/stats",
-    response_model=ApiResponse[FallaStatsResponse],
+    "/motos/{moto_id}/stats",
+    response_model=FallaStatsResponse,
     summary="Estadísticas de fallas (Premium)",
-    description="Obtiene estadísticas completas de fallas de una moto"
+    description="Obtiene estadísticas agregadas de fallas de una moto. Requiere plan Pro."
 )
 async def get_falla_stats(
     moto_id: int,
     db: AsyncSession = Depends(get_db),
-    feature_check: None = Depends(FeatureChecker(Feature.REPORTES_AVANZADOS))
-) -> ApiResponse[FallaStatsResponse]:
+    current_user: Usuario = Depends(get_current_user)
+):
     """
-    Obtiene estadísticas de fallas (requiere Premium).
+    Obtiene estadísticas de fallas de una moto.
     
     Incluye:
-    - Total de fallas, activas, resueltas, críticas
-    - Distribución por tipo, severidad y estado
+    - Total de fallas (activas, resueltas, críticas)
+    - Distribución por tipo, severidad, estado
     - Tiempo promedio de resolución
-    - Costo total de reparaciones
-    - Tasa de resolución
     
-    **⭐ Feature Premium**: Requiere suscripción Premium para acceder.
+    **Requiere plan Premium**
     """
-    use_case = GetFallaStatsUseCase(db)
-    stats = await use_case.execute(moto_id)
-    return create_success_response(
-        message="Estadísticas de fallas obtenidas exitosamente",
-        data=stats
-    )
-
-
-@router.delete(
-    "/{falla_id}",
-    response_model=SuccessResponse[None],
-    status_code=status.HTTP_200_OK,
-    summary="Eliminar falla",
-    description="Elimina (soft delete) una falla"
-)
-async def delete_falla(
-    falla_id: int,
-    db: AsyncSession = Depends(get_db)
-) -> SuccessResponse[None]:
-    """
-    Elimina una falla.
+    # TODO: Validar que el usuario tiene plan Pro
+    # if not current_user.es_premium:
+    #     raise HTTPException(status_code=403, detail="Requiere plan Premium")
     
-    Nota: Es un soft delete, no se elimina físicamente de la BD.
-    No se pueden eliminar fallas:
-    - En estado "en_revision"
-    - Críticas sin resolver
-    """
-    use_case = DeleteFallaUseCase(db)
-    await use_case.execute(falla_id)
-    return create_success_response(
-        message="Falla eliminada exitosamente",
-        data=None
-    )
+    try:
+        use_case = GetFallaStatsUseCase(db)
+        stats = await use_case.execute(moto_id)
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

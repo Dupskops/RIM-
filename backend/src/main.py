@@ -47,7 +47,7 @@ async def setup_event_handlers():
     
     # Importar clases de eventos
     from .sensores.events import AlertaSensorEvent, LecturaRegistradaEvent
-    from .fallas.events import FallaCriticaEvent, FallaResueltaEvent
+    from .fallas.events import FallaDetectadaEvent, FallaActualizadaEvent, FallaResueltaEvent
     from .mantenimiento.events import (
         MantenimientoUrgenteEvent, 
     )
@@ -55,7 +55,7 @@ async def setup_event_handlers():
     from .motos.events import KilometrajeUpdatedEvent
     from .auth.events import UserRegisteredEvent, PasswordResetRequestedEvent
     from .suscripciones.events import PlanChangedEvent, SuscripcionCancelledEvent
-    from .chatbot.events import LimiteAlcanzadoEvent
+    # from .chatbot.events import LimiteAlcanzadoEvent  # REMOVIDO: Ya no existe en events.py
     
     logger.info("📡 Registrando event handlers...")
     
@@ -75,8 +75,9 @@ async def setup_event_handlers():
     # ========================================
     # FALLAS → MANTENIMIENTO (Auto-creación)
     # ========================================
-    event_bus.subscribe_async(FallaCriticaEvent, handlers.create_mantenimiento_from_critical_fault)
-    event_bus.subscribe_async(FallaCriticaEvent, handlers.send_notification_for_critical_fault)
+    # NOTA MVP v2.3: FallaCriticaEvent fue removido. Ahora usamos FallaDetectadaEvent con severidad="critica"
+    event_bus.subscribe_async(FallaDetectadaEvent, handlers.create_mantenimiento_from_critical_fault)
+    event_bus.subscribe_async(FallaDetectadaEvent, handlers.send_notification_for_critical_fault)
     logger.info("✅ Fallas → Mantenimiento (2 handlers)")
     
     # ========================================
@@ -134,8 +135,9 @@ async def setup_event_handlers():
     # ========================================
     # CHATBOT → NOTIFICACIONES
     # ========================================
-    event_bus.subscribe_async(LimiteAlcanzadoEvent, handlers.send_limit_reached_notification)
-    logger.info("✅ Chatbot → Notificaciones (1 handler)")
+    # NOTA: LimiteAlcanzadoEvent fue removido en MVP v2.3 - Ahora se maneja en capa de servicio
+    # event_bus.subscribe_async(LimiteAlcanzadoEvent, handlers.send_limit_reached_notification)
+    logger.info("✅ Chatbot → Notificaciones (eventos removidos)")
     
     # Resumen
     total_sync = sum(len(h) for h in event_bus._subscribers.values())
@@ -194,6 +196,60 @@ app = FastAPI(
     redoc_url=f"{settings.API_PREFIX}/redoc",
     openapi_url=f"{settings.API_PREFIX}/openapi.json",
 )
+
+# ============================================
+# MANEJO GLOBAL DE EXCEPCIONES RIM
+# ============================================
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from src.shared.base_models import ErrorResponse, create_error_response
+from src.shared.exceptions import NotFoundError, ForbiddenError, ValidationError as RIMValidationError, RIMException
+
+
+@app.exception_handler(NotFoundError)
+async def handle_not_found(request, exc: NotFoundError):
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'NOT_FOUND'),
+        message=exc.message,
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=404, content=jsonable_encoder(payload))
+
+
+@app.exception_handler(ForbiddenError)
+async def handle_forbidden(request, exc: ForbiddenError):
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'FORBIDDEN_ERROR'),
+        message=exc.message,
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=403, content=jsonable_encoder(payload))
+
+
+@app.exception_handler(RIMValidationError)
+async def handle_rim_validation(request, exc: RIMValidationError):
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'VALIDATION_ERROR'),
+        message=exc.message,
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=422, content=jsonable_encoder(payload))
+
+
+@app.exception_handler(RIMException)
+async def handle_rim_exception(request, exc: RIMException):
+    # Manejo por defecto para excepciones de negocio no mapeadas
+    payload = create_error_response(
+        error=getattr(exc, 'code', 'RIM_ERROR'),
+        message=getattr(exc, 'message', str(exc)),
+        details=None,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=400, content=jsonable_encoder(payload))
+
 
 
 # ============================================
@@ -266,8 +322,17 @@ async def health_check() -> Dict[str, Any]:
     # Verificar servicios críticos
     db_healthy = await check_db_connection()
     
+    # Verificar Ollama (chatbot)
+    chatbot_healthy = False
+    try:
+        llm_provider = get_llm_provider()
+        chatbot_healthy = await llm_provider.health_check()
+    except Exception as e:
+        logger.warning(f"Error verificando Ollama en health check: {e}")
+    
     # Determinar estado general
-    status = "healthy" if db_healthy else "degraded"
+    # API está degradada si DB falla, pero puede funcionar sin chatbot
+    status = "healthy" if db_healthy and chatbot_healthy else ("degraded" if db_healthy else "unhealthy")
     
     return {
         "status": status,
@@ -275,6 +340,7 @@ async def health_check() -> Dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
             "database": "healthy" if db_healthy else "unhealthy",
+            "chatbot": "healthy" if chatbot_healthy else "unhealthy",
             "api": "healthy"
         }
     }

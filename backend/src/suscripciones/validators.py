@@ -16,19 +16,26 @@ from .schemas import (
 )
 
 
-# Claves de características válidas en v2.3
+# Claves de características válidas en v2.3 (alineadas con SEED_DATA_MVP_V2.2.sql)
 CARACTERISTICAS_VALIDAS = {
+    # TIER 1: Básicas (Free + Pro) - Ilimitadas
+    "ALERTS_CRITICAL",
+    "SERVICE_HISTORY",
+    "BASIC_DIAGNOSTICS",
+    "LIVE_LOCATION",
+    "TRIP_HISTORY",
+    "PERFORMANCE_STATS",
+    # TIER 2: Con límite en Free
     "CHATBOT",
-    "ML_PREDICTIONS", 
-    "EXPORT_REPORTS",
+    "ML_PREDICTIONS",
     "CUSTOM_ALERTS",
+    "EXPORT_REPORTS",
+    # TIER 3: Premium (Solo Pro)
     "MULTI_BIKE",
-    "NOTIFICATIONS",
-    "REPORTS",
-    "ALERTS",
-    "MOTO_REGISTER",
-    "SENSOR_VIEW",
-    "DASHBOARD",
+    "ADVANCED_ANALYTICS",
+    "PREDICTIVE_MAINTENANCE",
+    "RIDING_MODES",
+    "PRIORITY_SUPPORT",
 }
 
 

@@ -3,7 +3,7 @@ Módulo de autenticación.
 Sistema completo de JWT, registro, login y gestión de usuarios.
 """
 
-from .models import Usuario, RefreshToken, PasswordResetToken, EmailVerificationToken
+from .models import Usuario, RefreshToken, PasswordResetToken, EmailVerificationToken, RolUsuario
 from .schemas import (
     RegisterRequest,
     LoginRequest,
@@ -52,6 +52,7 @@ __all__ = [
     "RefreshToken",
     "PasswordResetToken",
     "EmailVerificationToken",
+    "RolUsuario",
     # Schemas
     "RegisterRequest",
     "LoginRequest",

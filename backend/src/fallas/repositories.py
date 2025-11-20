@@ -1,14 +1,18 @@
 """
 Repositorio para operaciones de base de datos de fallas.
 Capa de acceso a datos siguiendo patrón Repository.
+
+MVP v2.3 - Actualizado para alineación con CREATE_TABLES_MVP_V2.2.sql
 """
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func, and_, or_
+from typing import Optional, List, Dict
+from datetime import datetime, timedelta, date, timezone
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Falla
-from ..shared.constants import EstadoFalla, SeveridadFalla
+from .models import Falla, EstadoFalla, SeveridadFalla
 
 
 class FallaRepository:
@@ -250,7 +254,7 @@ class FallaRepository:
         result = await self.session.execute(query)
         return result.scalar_one()
     
-    async def get_stats_by_tipo(self, moto_id: int) -> dict:
+    async def get_stats_by_tipo(self, moto_id: int) -> Dict[str, int]:
         """
         Obtiene estadísticas de fallas agrupadas por tipo.
         
@@ -274,7 +278,7 @@ class FallaRepository:
         
         return {row.tipo: row.count for row in result}
     
-    async def get_stats_by_severidad(self, moto_id: int) -> dict:
+    async def get_stats_by_severidad(self, moto_id: int) -> Dict[str, int]:
         """
         Obtiene estadísticas de fallas agrupadas por severidad.
         
@@ -298,25 +302,52 @@ class FallaRepository:
         
         return {row.severidad: row.count for row in result}
     
-    async def get_costo_total_reparaciones(self, moto_id: int) -> float:
+    async def count_by_date(self, fecha: date) -> int:
         """
-        Calcula el costo total de reparaciones de una moto.
+        Cuenta el número de fallas creadas en una fecha específica.
+        Usado para generar códigos únicos secuenciales (FL-YYYYMMDD-NNN).
         
         Args:
-            moto_id: ID de la moto
+            fecha: Fecha a consultar
             
         Returns:
-            Costo total
+            Número de fallas en esa fecha
         """
+        from datetime import time
+        
+        fecha_inicio = datetime.combine(fecha, time.min)
+        fecha_fin = datetime.combine(fecha, time.max)
+        
         result = await self.session.execute(
-            select(func.sum(Falla.costo_real)).where(
+            select(func.count(Falla.id)).where(
                 and_(
-                    Falla.moto_id == moto_id,
-                    Falla.costo_real.isnot(None),
+                    Falla.fecha_deteccion >= fecha_inicio,
+                    Falla.fecha_deteccion <= fecha_fin,
                     Falla.deleted_at.is_(None)
                 )
             )
         )
         
-        total = result.scalar_one()
-        return float(total) if total else 0.0
+        return result.scalar_one()
+    
+    async def get_by_estado(self, estado: EstadoFalla) -> List[Falla]:
+        """
+        Obtiene todas las fallas en un estado específico.
+        Útil para jobs automáticos (ej: auto-resolver fallas transitorias).
+        
+        Args:
+            estado: Estado a filtrar (ENUM)
+            
+        Returns:
+            Lista de fallas en ese estado
+        """
+        result = await self.session.execute(
+            select(Falla).where(
+                and_(
+                    Falla.estado == estado,
+                    Falla.deleted_at.is_(None)
+                )
+            ).order_by(Falla.fecha_deteccion.desc())
+        )
+        
+        return list(result.scalars().all())

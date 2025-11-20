@@ -144,15 +144,73 @@ async def get_my_suscripcion(
     suscripcion = await use_case.execute(usuario_id=int(current_user.id))
     
     if not suscripcion:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No tienes una suscripción activa. Contacta con soporte."
-        )
+        from src.shared.exceptions import NotFoundError
+        raise NotFoundError("No tienes una suscripción activa. Contacta con soporte.")
     
     return ApiResponse(
         success=True,
         message="Suscripción activa obtenida",
         data=suscripcion
+    )
+
+
+
+
+
+@router.get(
+    "/limites/historial",
+    response_model=ApiResponse[List[UsoHistorialResponse]],
+    summary="Ver historial de uso del mes",
+    tags=["Suscripciones - Límites"]
+)
+async def get_historial_uso(
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Obtiene el historial de uso de características del mes actual.
+    
+    **Muestra:**
+    - Todas las características usadas este mes
+    - Contador de usos por característica
+    - Límite mensual de cada una
+    - Último uso registrado
+    
+    **Útil para:**
+    - Dashboard de uso
+    - Página "Mi cuenta"
+    - Gráficas de consumo
+    
+    **Respuesta:**
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+            "caracteristica": "CHATBOT",
+            "usos_realizados": 3,
+            "limite_mensual": 5,
+            "ultimo_uso_at": "2025-11-15T10:30:00",
+            "periodo_mes": "2025-11-01"
+            },
+            {
+            "caracteristica": "ML_PREDICTIONS",
+            "usos_realizados": 2,
+            "limite_mensual": 4,
+            "ultimo_uso_at": "2025-11-14T15:20:00",
+            "periodo_mes": "2025-11-01"
+            }
+        ]
+    }
+    ```
+    """
+    use_case = GetHistorialUsoUseCase(db)
+    historial = await use_case.execute(usuario_id=int(current_user.id))
+    
+    return ApiResponse(
+        success=True,
+        message=f"Historial de uso obtenido ({len(historial)} características)",
+        data=historial
     )
 
 
@@ -316,63 +374,6 @@ async def registrar_uso(
         success=True,
         message="Uso registrado exitosamente",
         data=result
-    )
-
-
-@router.get(
-    "/limites/historial",
-    response_model=ApiResponse[List[UsoHistorialResponse]],
-    summary="Ver historial de uso del mes",
-    tags=["Suscripciones - Límites"]
-)
-async def get_historial_uso(
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """
-    Obtiene el historial de uso de características del mes actual.
-    
-    **Muestra:**
-    - Todas las características usadas este mes
-    - Contador de usos por característica
-    - Límite mensual de cada una
-    - Último uso registrado
-    
-    **Útil para:**
-    - Dashboard de uso
-    - Página "Mi cuenta"
-    - Gráficas de consumo
-    
-    **Respuesta:**
-    ```json
-    {
-        "success": true,
-        "data": [
-            {
-            "caracteristica": "CHATBOT",
-            "usos_realizados": 3,
-            "limite_mensual": 5,
-            "ultimo_uso_at": "2025-11-15T10:30:00",
-            "periodo_mes": "2025-11-01"
-            },
-            {
-            "caracteristica": "ML_PREDICTIONS",
-            "usos_realizados": 2,
-            "limite_mensual": 4,
-            "ultimo_uso_at": "2025-11-14T15:20:00",
-            "periodo_mes": "2025-11-01"
-            }
-        ]
-    }
-    ```
-    """
-    use_case = GetHistorialUsoUseCase(db)
-    historial = await use_case.execute(usuario_id=int(current_user.id))
-    
-    return ApiResponse(
-        success=True,
-        message=f"Historial de uso obtenido ({len(historial)} características)",
-        data=historial
     )
 
 

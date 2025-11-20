@@ -33,7 +33,7 @@ class UsuarioRepository:
         await self.session.refresh(usuario)
         return usuario
 
-   #Cambie el get_by_id - Usuario.id == user_id) para hacer la conversion a INT 
+    #Cambie el get_by_id - Usuario.id == user_id) para hacer la conversion a INT 
     async def get_by_id(self, user_id: str | int) -> Optional[Usuario]:
         """Obtiene usuario por ID."""
         try:   

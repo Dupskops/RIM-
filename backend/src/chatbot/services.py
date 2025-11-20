@@ -1,34 +1,70 @@
 """
 Servicios de lógica de negocio para el chatbot.
+
+Alineado con MVP v2.3 - Sistema de límites Freemium.
+Gestiona conversaciones con límite de 5/mes para usuarios Free.
 """
 import uuid
-import time
-from typing import Optional, AsyncGenerator, Dict, Any
+from typing import Optional, AsyncGenerator, Dict, Any, List
 from datetime import datetime
 
 from src.chatbot.repositories import ConversacionRepository, MensajeRepository
-from src.chatbot.models import Conversacion, Mensaje
-from src.chatbot import validators
-from src.chatbot.prompts.diagnostic_prompt import (
+from src.chatbot.models import Conversacion, Mensaje, RoleMensaje, TipoPrompt
+from src.chatbot.prompts import (
+    # Diagnostic
     DIAGNOSTIC_SYSTEM_PROMPT,
     build_diagnostic_prompt,
-    build_quick_diagnostic_prompt
-)
-from src.chatbot.prompts.maintenance_prompt import (
+    build_quick_diagnostic_prompt,
+    # Maintenance
     MAINTENANCE_SYSTEM_PROMPT,
-    build_maintenance_recommendation_prompt
-)
-from src.chatbot.prompts.explanation_prompt import (
+    build_maintenance_recommendation_prompt,
+    # Explanation
     EXPLANATION_SYSTEM_PROMPT,
-    build_explanation_prompt
+    build_explanation_prompt,
+    # ML Analysis (NEW v2.3)
+    ML_ANALYSIS_SYSTEM_PROMPT,
+    build_ml_analysis_report_prompt,
+    build_quick_ml_summary_prompt,
+    # Trip Analysis (NEW v2.3)
+    TRIP_ANALYSIS_SYSTEM_PROMPT,
+    build_trip_summary_prompt,
+    # Sensor Reading (NEW v2.3)
+    SENSOR_READING_SYSTEM_PROMPT,
+    build_sensor_reading_prompt,
+    build_multi_sensor_dashboard_prompt,
+    # Freemium (NEW v2.3)
+    FREEMIUM_COMPARISON_SYSTEM_PROMPT,
+    build_plan_comparison_prompt,
+    build_limit_reached_prompt,
+    # Title generation
+    generate_conversation_title,
 )
 from src.integraciones.llm_provider import get_llm_provider
+from src.chatbot import validators
+
+
+# Constantes de error
+ERROR_CONVERSATION_ID_INVALID = "El formato del conversation_id es inválido"
+ERROR_NO_ACCESS = "No tienes acceso a esta conversación"
+ERROR_CONVERSATION_NOT_FOUND = "Conversación {} no encontrada"
+
+# Constantes del sistema
+DEFAULT_BIKE_MODEL = "KTM 390 Duke 2024"
 
 
 class ChatbotService:
-    """Servicio principal para el chatbot."""
+    """
+    Servicio principal para el chatbot con límites Freemium.
+    
+    Free: 5 conversaciones/mes
+    Pro: Conversaciones ilimitadas
+    """
 
-    def __init__(self, conversacion_repo: ConversacionRepository, mensaje_repo: MensajeRepository):
+    def __init__(
+        self, 
+        conversacion_repo: ConversacionRepository, 
+        mensaje_repo: MensajeRepository
+    ):
         self.conversacion_repo = conversacion_repo
         self.mensaje_repo = mensaje_repo
         self.llm_provider = get_llm_provider()
@@ -36,22 +72,39 @@ class ChatbotService:
     async def create_conversacion(
         self,
         usuario_id: int,
-        titulo: str,
-        nivel_acceso: str,
-        moto_id: Optional[int] = None
+        moto_id: int,
+        titulo: Optional[str] = None
     ) -> Conversacion:
-        """Crea una nueva conversación."""
-        conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
+        """
+        Crea una nueva conversación.
         
+        Args:
+            usuario_id: ID del usuario
+            moto_id: ID de la moto (obligatorio en v2.3)
+            titulo: Título opcional (se genera automáticamente si no se provee)
+            
+        Returns:
+            Conversación creada
+            
+        Raises:
+            ValueError: Si el título es inválido
+        """
+        conversation_id = f"conv_{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:12]}"
+        
+        # Validar título si se proporciona manualmente
+        if titulo and not validators.validate_conversation_title(titulo):
+            raise ValueError("El título debe tener entre 1 y 200 caracteres")
+        
+        # Si no se proporciona título, se dejará None y se generará automáticamente
+        # después del primer mensaje (cuando tengamos contexto real)
         conversacion = Conversacion(
             conversation_id=conversation_id,
             usuario_id=usuario_id,
             moto_id=moto_id,
-            titulo=titulo,
-            nivel_acceso=nivel_acceso,
+            titulo=titulo,  # Puede ser None inicialmente
             activa=True,
             total_mensajes=0,
-            ultima_actividad=datetime.utcnow()
+            ultima_actividad=datetime.now()
         )
         
         return await self.conversacion_repo.create(conversacion)
@@ -59,219 +112,397 @@ class ChatbotService:
     async def get_or_create_conversacion(
         self,
         usuario_id: int,
-        conversation_id: Optional[str],
-        nivel_acceso: str,
-        moto_id: Optional[int] = None
+        moto_id: int,
+        conversation_id: Optional[str] = None,
+        titulo: Optional[str] = None
     ) -> Conversacion:
-        """Obtiene una conversación existente o crea una nueva."""
+        """
+        Obtiene una conversación existente o crea una nueva.
+        
+        Args:
+            usuario_id: ID del usuario
+            moto_id: ID de la moto
+            conversation_id: ID de conversación existente (opcional)
+            titulo: Título para nueva conversación (opcional)
+            
+        Returns:
+            Conversación existente o nueva
+        """
         if conversation_id:
             conversacion = await self.conversacion_repo.get_by_conversation_id(conversation_id)
             if conversacion and conversacion.usuario_id == usuario_id:
                 return conversacion
         
         # Crear nueva conversación
-        titulo = f"Conversación {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        return await self.create_conversacion(usuario_id, titulo, nivel_acceso, moto_id)
+        return await self.create_conversacion(usuario_id, moto_id, titulo)
+
+    async def add_user_message(
+        self,
+        conversacion_id: int,
+        contenido: str
+    ) -> Mensaje:
+        """
+        Agrega un mensaje del usuario a la conversación.
+        
+        Args:
+            conversacion_id: ID de la conversación
+            contenido: Contenido del mensaje
+            
+        Returns:
+            Mensaje creado
+            
+        Raises:
+            ValueError: Si el mensaje excede la longitud máxima
+        """
+        # Validar longitud del mensaje
+        if not validators.validate_message_length(contenido):
+            raise ValueError("El mensaje debe tener entre 1 y 2000 caracteres")
+        
+        mensaje = Mensaje(
+            conversacion_id=conversacion_id,
+            role=RoleMensaje.user.value,  # Fix: Use value string
+            contenido=contenido
+        )
+        
+        return await self.mensaje_repo.create(mensaje)
+
+    async def add_assistant_message(
+        self,
+        conversacion_id: int,
+        contenido: str,
+        tipo_prompt: TipoPrompt = TipoPrompt.general,
+        tokens_usados: int = 0,
+        tiempo_respuesta_ms: int = 0,
+        modelo_usado: str = "unknown"
+    ) -> Mensaje:
+        """
+        Agrega un mensaje del asistente a la conversación.
+        
+        MVP v2.3 - Ahora incluye métricas de LLM.
+        
+        Args:
+            conversacion_id: ID de la conversación
+            contenido: Contenido del mensaje
+            tipo_prompt: Tipo de prompt usado
+            tokens_usados: Tokens generados por el LLM
+            tiempo_respuesta_ms: Tiempo de respuesta en milisegundos
+            modelo_usado: Modelo de LLM usado
+            
+        Returns:
+            Mensaje creado con métricas
+        """
+        # Asegurar que tipo_prompt sea el valor string
+        tipo_prompt_val = tipo_prompt.value if isinstance(tipo_prompt, TipoPrompt) else tipo_prompt
+
+        mensaje = Mensaje(
+            conversacion_id=conversacion_id,
+            role=RoleMensaje.assistant.value,  # Fix: Use value string
+            contenido=contenido,
+            tipo_prompt=tipo_prompt_val,
+            tokens_usados=tokens_usados,
+            tiempo_respuesta_ms=tiempo_respuesta_ms,
+            modelo_usado=modelo_usado
+        )
+        
+        return await self.mensaje_repo.create(mensaje)
 
     async def process_message(
         self,
-        usuario_id: int,
+        conversacion: Conversacion,
         message: str,
-        conversation_id: Optional[str] = None,
-        nivel_acceso: str = "freemium",
-        moto_id: Optional[int] = None,
-        tipo_prompt: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
-    ) -> tuple[str, Conversacion, Mensaje]:
+        context: Optional[Dict[str, Any]] = None,
+        tipo_prompt_override: Optional[TipoPrompt] = None
+    ) -> tuple[str, Mensaje, Mensaje]:
         """
-        Procesa un mensaje del usuario y genera respuesta.
+        Procesa un mensaje del usuario y genera respuesta del LLM.
         
+        Args:
+            conversacion: Conversación activa
+            message: Mensaje del usuario
+            context: Contexto adicional (sensores, fallas, etc.)
+            tipo_prompt_override: Tipo de prompt a usar (si no se especifica, se detecta)
+            
         Returns:
-            Tuple con (respuesta, conversacion, mensaje_asistente)
+            Tuple con (respuesta_texto, mensaje_usuario, mensaje_asistente)
+            
+        Raises:
+            ValueError: Si el contexto es inválido
         """
-        # Verificar límites
-        mensajes_hoy = await self.mensaje_repo.count_by_usuario_hoy(usuario_id)
-        if nivel_acceso == "freemium":
-            if not validators.can_send_message_freemium(mensajes_hoy):
-                raise ValueError("Límite diario de mensajes alcanzado (Freemium: 50/día)")
-        else:
-            if not validators.can_send_message_premium(mensajes_hoy):
-                raise ValueError("Límite diario de mensajes alcanzado (Premium: 1000/día)")
+        import time
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] ChatbotService.process_message iniciado. Message: {message[:50]}...")
+        start_time = time.time()
+        # Validar contexto si se proporciona
+        if context and not validators.validate_context_data(context):
+            raise ValueError("El contexto proporcionado es inválido o excede el tamaño máximo (50KB)")
         
-        # Obtener o crear conversación
-        conversacion = await self.get_or_create_conversacion(
-            usuario_id, conversation_id, nivel_acceso, moto_id
-        )
-        
-        # Guardar mensaje del usuario
-        mensaje_usuario = Mensaje(
+        # 1. Guardar mensaje del usuario
+        mensaje_usuario = await self.add_user_message(
             conversacion_id=conversacion.id,
-            role="user",
             contenido=message
         )
-        await self.mensaje_repo.create(mensaje_usuario)
         
-        # Detectar tipo de prompt si no se especifica
-        if not tipo_prompt:
-            tipo_prompt = validators.detect_prompt_type(message)
+        # 2. Detectar tipo de prompt
+        tipo_prompt = tipo_prompt_override or self._detect_prompt_type(message)
         
-        # Construir contexto y prompt
+        # 3. Construir prompts
         system_prompt, user_prompt = await self._build_prompts(
-            tipo_prompt,
-            message,
-            conversacion.id,
-            nivel_acceso,
-            context or {}
+            tipo_prompt=tipo_prompt,
+            message=message,
+            conversacion_id=conversacion.id,
+            context=context or {}
         )
         
-        # Generar respuesta
-        start_time = time.time()
-        response = await self.llm_provider.generate(
+        # 4. Generar respuesta del LLM con métricas
+        response, metrics = await self.llm_provider.generate(
             prompt=user_prompt,
             system_prompt=system_prompt,
-            max_tokens=validators.get_max_tokens(nivel_acceso),
-            temperature=0.7
+            max_tokens=1000,  # MVP: límite fijo
+            temperature=0.7,
+            return_metrics=True
         )
-        end_time = time.time()
         
-        response_time_ms = int((end_time - start_time) * 1000)
-        
-        # Guardar mensaje del asistente
-        mensaje_asistente = Mensaje(
+        # 5. Guardar mensaje del asistente con métricas
+        mensaje_asistente = await self.add_assistant_message(
             conversacion_id=conversacion.id,
-            role="assistant",
             contenido=response,
-            tokens_usados=len(response.split()),
-            tiempo_respuesta_ms=response_time_ms,
-            modelo_usado=self.llm_provider.model_name,
-            tipo_prompt=tipo_prompt
+            tipo_prompt=tipo_prompt,
+            tokens_usados=metrics.get("tokens_usados", 0),
+            tiempo_respuesta_ms=metrics.get("tiempo_respuesta_ms", 0),
+            modelo_usado=metrics.get("modelo_usado", "unknown")
         )
-        await self.mensaje_repo.create(mensaje_asistente)
         
-        # Actualizar conversación
+        # 6. Actualizar conversación
         await self.conversacion_repo.actualizar_actividad(conversacion)
         
-        return response, conversacion, mensaje_asistente
+        # 7. Generar título automáticamente si es el primer mensaje
+        if not conversacion.titulo or conversacion.titulo.startswith("Conversación"):
+            titulo_generado = generate_conversation_title(
+                user_message=message,
+                assistant_response=response,
+                tipo_prompt=tipo_prompt
+            )
+            conversacion.titulo = titulo_generado
+            await self.conversacion_repo.update(conversacion)
+        
+        return response, mensaje_usuario, mensaje_asistente
 
     async def process_message_stream(
         self,
-        usuario_id: int,
+        conversacion: Conversacion,
         message: str,
-        conversation_id: Optional[str] = None,
-        nivel_acceso: str = "freemium",
-        moto_id: Optional[int] = None,
-        tipo_prompt: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        tipo_prompt_override: Optional[TipoPrompt] = None
     ) -> AsyncGenerator[str, None]:
         """
         Procesa un mensaje con streaming de respuesta.
         
+        Args:
+            conversacion: Conversación activa
+            message: Mensaje del usuario
+            context: Contexto adicional
+            tipo_prompt_override: Tipo de prompt a usar
+            
         Yields:
-            Chunks de la respuesta del LLM
+            Chunks de texto de la respuesta
+            
+        Raises:
+            ValueError: Si el contexto es inválido
         """
-        # Verificar límites
-        mensajes_hoy = await self.mensaje_repo.count_by_usuario_hoy(usuario_id)
-        if nivel_acceso == "freemium":
-            if not validators.can_send_message_freemium(mensajes_hoy):
-                raise ValueError("Límite diario de mensajes alcanzado")
+        # Validar contexto si se proporciona
+        if context and not validators.validate_context_data(context):
+            raise ValueError("El contexto proporcionado es inválido o excede el tamaño máximo (50KB)")
         
-        # Obtener o crear conversación
-        conversacion = await self.get_or_create_conversacion(
-            usuario_id, conversation_id, nivel_acceso, moto_id
-        )
-        
-        # Guardar mensaje del usuario
-        mensaje_usuario = Mensaje(
+        # 1. Guardar mensaje del usuario
+        await self.add_user_message(
             conversacion_id=conversacion.id,
-            role="user",
             contenido=message
         )
-        await self.mensaje_repo.create(mensaje_usuario)
         
-        # Detectar tipo de prompt
-        if not tipo_prompt:
-            tipo_prompt = validators.detect_prompt_type(message)
+        # 2. Detectar tipo de prompt
+        tipo_prompt = tipo_prompt_override or self._detect_prompt_type(message)
         
-        # Construir prompts
+        # 3. Construir prompts
         system_prompt, user_prompt = await self._build_prompts(
-            tipo_prompt,
-            message,
-            conversacion.id,
-            nivel_acceso,
-            context or {}
+            tipo_prompt=tipo_prompt,
+            message=message,
+            conversacion_id=conversacion.id,
+            context=context or {}
         )
         
-        # Stream de respuesta
+        # 4. Stream de respuesta con métricas
         response_chunks = []
-        start_time = time.time()
+        metrics = None
         
         async for chunk in self.llm_provider.generate_stream(
             prompt=user_prompt,
             system_prompt=system_prompt,
-            max_tokens=validators.get_max_tokens(nivel_acceso),
-            temperature=0.7
+            max_tokens=1000,
+            temperature=0.7,
+            return_metrics=True
         ):
-            response_chunks.append(chunk)
-            yield chunk
+            # El último elemento puede ser un dict con métricas
+            if isinstance(chunk, dict):
+                metrics = chunk  # Capturar métricas al final
+            else:
+                response_chunks.append(chunk)
+                yield chunk
         
-        end_time = time.time()
-        response_time_ms = int((end_time - start_time) * 1000)
-        
-        # Guardar respuesta completa
+        # 5. Guardar respuesta completa con métricas
         full_response = "".join(response_chunks)
-        mensaje_asistente = Mensaje(
+        await self.add_assistant_message(
             conversacion_id=conversacion.id,
-            role="assistant",
             contenido=full_response,
-            tokens_usados=len(full_response.split()),
-            tiempo_respuesta_ms=response_time_ms,
-            modelo_usado=self.llm_provider.model_name,
-            tipo_prompt=tipo_prompt
+            tipo_prompt=tipo_prompt,
+            tokens_usados=metrics.get("tokens_usados", 0) if metrics else 0,
+            tiempo_respuesta_ms=metrics.get("tiempo_respuesta_ms", 0) if metrics else 0,
+            modelo_usado=metrics.get("modelo_usado", "unknown") if metrics else "unknown"
         )
-        await self.mensaje_repo.create(mensaje_asistente)
+
+        # 6. Actualizar conversación
         
-        # Actualizar conversación
-        await self.conversacion_repo.actualizar_actividad(conversacion)
+        # 7. Generar título automáticamente si es el primer mensaje (streaming)
+        if not conversacion.titulo:
+            titulo_generado = generate_conversation_title(
+                user_message=message,
+                assistant_response=full_response,
+                tipo_prompt=tipo_prompt
+            )
+            conversacion.titulo = titulo_generado
+            await self.conversacion_repo.update(conversacion)
+
+    def _detect_prompt_type(self, message: str) -> TipoPrompt:
+        """
+        Detecta el tipo de prompt basado en el mensaje del usuario.
+        
+        MVP v2.3 - Detección expandida para nuevos tipos de prompts.
+        
+        Args:
+            message: Mensaje del usuario
+            
+        Returns:
+            Tipo de prompt detectado
+        """
+        message_lower = message.lower()
+        
+        # Keywords para análisis ML (alta prioridad - muy específico)
+        ml_keywords = [
+            "análisis ml", "predicción", "machine learning", "probabilidad",
+            "modelo predictivo", "score de componente", "riesgo de falla",
+            "predicciones", "análisis predictivo", "shap"
+        ]
+        if any(keyword in message_lower for keyword in ml_keywords):
+            return TipoPrompt.ml_analysis
+        
+        # Keywords para análisis de viajes
+        trip_keywords = [
+            "viaje", "ruta", "trayecto", "conducción", "estilo de manejo",
+            "eficiencia de combustible", "consumo", "rpm promedio", "aceleración",
+            "patrón de conducción", "kilometraje del viaje"
+        ]
+        if any(keyword in message_lower for keyword in trip_keywords):
+            return TipoPrompt.trip_analysis
+        
+        # Keywords para sensores (lecturas en tiempo real)
+        sensor_keywords = [
+            "sensor", "lectura actual", "temperatura actual", "rpm ahora",
+            "velocidad actual", "presión de aceite", "nivel de combustible",
+            "estado del componente", "dashboard", "panel de instrumentos"
+        ]
+        if any(keyword in message_lower for keyword in sensor_keywords):
+            return TipoPrompt.sensor_reading
+        
+        # Keywords para Freemium (comparativas y planes)
+        freemium_keywords = [
+            "plan free", "plan pro", "diferencia entre planes", "actualizar plan",
+            "límite alcanzado", "características premium", "qué incluye pro",
+            "precio", "suscripción", "upgrade", "funcionalidades"
+        ]
+        if any(keyword in message_lower for keyword in freemium_keywords):
+            return TipoPrompt.freemium
+        
+        # Keywords para diagnóstico
+        diagnostic_keywords = [
+            "problema", "falla", "error", "ruido", "vibración", "olor",
+            "humo", "temperatura alta", "sobrecalienta", "no arranca", "se apaga"
+        ]
+        if any(keyword in message_lower for keyword in diagnostic_keywords):
+            return TipoPrompt.diagnostic
+        
+        # Keywords para mantenimiento
+        maintenance_keywords = [
+            "mantenimiento", "servicio", "cambio de", "aceite", "filtro",
+            "pastillas", "freno", "cadena", "neumático", "revisión", "cuándo cambiar"
+        ]
+        if any(keyword in message_lower for keyword in maintenance_keywords):
+            return TipoPrompt.maintenance
+        
+        # Keywords para explicación
+        explanation_keywords = [
+            "qué es", "cómo funciona", "para qué sirve", "explicar", "significa",
+            "diferencia entre", "por qué", "qué significa"
+        ]
+        if any(keyword in message_lower for keyword in explanation_keywords):
+            return TipoPrompt.explanation
+        
+        # Por defecto: general
+        return TipoPrompt.general
 
     async def _build_prompts(
         self,
-        tipo_prompt: str,
+        tipo_prompt: TipoPrompt,
         message: str,
         conversacion_id: int,
-        nivel_acceso: str,
         context: Dict[str, Any]
     ) -> tuple[str, str]:
-        """Construye los prompts del sistema y usuario."""
-        # Obtener historial de contexto
-        max_context = validators.get_max_context_messages(nivel_acceso)
+        """
+        Construye los prompts del sistema y usuario.
+        
+        MVP v2.3 - Soporta tipos básicos: DIAGNOSTIC, MAINTENANCE, EXPLANATION, GENERAL.
+        Los nuevos tipos (ML_ANALYSIS, TRIP_ANALYSIS, SENSOR_READING, FREEMIUM) usan
+        prompts pre-construidos que vienen en context["user_prompt"].
+        
+        Args:
+            tipo_prompt: Tipo de prompt
+            message: Mensaje del usuario
+            conversacion_id: ID de la conversación
+            context: Contexto adicional
+            
+        Returns:
+            Tuple con (system_prompt, user_prompt)
+        """
+        # Obtener historial de mensajes previos (últimos 5 para contexto)
         mensajes_previos = await self.mensaje_repo.get_ultimos_mensajes(
             conversacion_id,
-            limit=max_context
+            limit=5
         )
         
         # Construir contexto de conversación
-        conversation_context = "\n".join([
-            f"{m.role.upper()}: {m.contenido}"
-            for m in mensajes_previos
-        ])
+        conversation_context = ""
+        if mensajes_previos:
+            conversation_context = "\n".join([
+                f"{m.role.value.upper()}: {m.contenido}"
+                for m in mensajes_previos
+            ])
         
-        # Seleccionar system prompt según tipo
-        if tipo_prompt == "diagnostic":
+        # Seleccionar system prompt y construir user prompt según tipo
+        if tipo_prompt == TipoPrompt.diagnostic:
             system_prompt = DIAGNOSTIC_SYSTEM_PROMPT
-            if context and "datos_sensores" in context:
+            if context.get("datos_sensores"):
                 user_prompt = build_diagnostic_prompt(
                     sintomas=message,
                     datos_sensores=context.get("datos_sensores", {}),
                     fallas_recientes=context.get("fallas_recientes", []),
                     kilometraje=context.get("kilometraje", 0),
-                    modelo_moto=context.get("modelo_moto", "Desconocido")
+                    modelo_moto=context.get("modelo_moto", DEFAULT_BIKE_MODEL)
                 )
             else:
                 user_prompt = build_quick_diagnostic_prompt(message)
         
-        elif tipo_prompt == "maintenance":
+        elif tipo_prompt == TipoPrompt.maintenance:
             system_prompt = MAINTENANCE_SYSTEM_PROMPT
-            if context and "mantenimientos_vencidos" in context:
+            if context.get("kilometraje_actual"):
                 user_prompt = build_maintenance_recommendation_prompt(
                     kilometraje_actual=context.get("kilometraje_actual", 0),
                     ultimo_mantenimiento=context.get("ultimo_mantenimiento", {}),
@@ -280,19 +511,88 @@ class ChatbotService:
                     patron_uso=context.get("patron_uso", {})
                 )
             else:
-                user_prompt = message
+                user_prompt = f"Pregunta de mantenimiento: {message}"
         
-        elif tipo_prompt == "explanation":
+        elif tipo_prompt == TipoPrompt.explanation:
             system_prompt = EXPLANATION_SYSTEM_PROMPT
             user_prompt = build_explanation_prompt(
                 pregunta=message,
                 contexto_usuario=context
             )
         
-        else:  # general
-            system_prompt = """Eres un asistente experto en motocicletas del sistema RIM.
+        elif tipo_prompt == TipoPrompt.ml_analysis:
+            system_prompt = ML_ANALYSIS_SYSTEM_PROMPT
+            # Determinar si es análisis rápido o completo
+            if context.get("quick_summary"):
+                user_prompt = build_quick_ml_summary_prompt(
+                    score_general=context.get("score_general", 0),
+                    num_componentes_criticos=context.get("num_componentes_criticos", 0),
+                    num_predicciones=context.get("num_predicciones", 0),
+                    modelo_moto=context.get("modelo_moto", DEFAULT_BIKE_MODEL)
+                )
+            else:
+                user_prompt = build_ml_analysis_report_prompt(
+                    analysis_results=context.get("analysis_results", {}),
+                    componentes_estado=context.get("componentes_estado", []),
+                    predicciones=context.get("predicciones", []),
+                    anomalias=context.get("anomalias", []),
+                    kilometraje=context.get("kilometraje", 0),
+                    modelo_moto=context.get("modelo_moto", DEFAULT_BIKE_MODEL),
+                    es_usuario_pro=context.get("es_usuario_pro", False)
+                )
+        
+        elif tipo_prompt == TipoPrompt.trip_analysis:
+            system_prompt = TRIP_ANALYSIS_SYSTEM_PROMPT
+            user_prompt = build_trip_summary_prompt(
+                viaje=context.get("viaje", {}),
+                telemetria=context.get("telemetria", {}),
+                impacto_componentes=context.get("impacto_componentes", []),
+                es_usuario_pro=context.get("es_usuario_pro", False)
+            )
+        
+        elif tipo_prompt == TipoPrompt.sensor_reading:
+            system_prompt = SENSOR_READING_SYSTEM_PROMPT
+            # Determinar si es dashboard completo o sensor individual
+            if context.get("dashboard"):
+                user_prompt = build_multi_sensor_dashboard_prompt(
+                    lecturas_actuales=context.get("lecturas_actuales", []),
+                    alertas_activas=context.get("alertas_activas", []),
+                    modelo_moto=context.get("modelo_moto", DEFAULT_BIKE_MODEL),
+                    ultimo_analisis_ml=context.get("ultimo_analisis_ml", {})
+                )
+            else:
+                user_prompt = build_sensor_reading_prompt(
+                    sensor_tipo=context.get("sensor_tipo", "temperatura"),
+                    valor_actual=context.get("valor_actual", 0.0),
+                    unidad=context.get("unidad", "°C"),
+                    estado_calculado=context.get("estado_calculado", "BUENO"),
+                    reglas_estado=context.get("reglas_estado", {}),
+                    historial_reciente=context.get("historial_reciente", []),
+                    componente_nombre=context.get("componente_nombre", "Motor")
+                )
+        
+        elif tipo_prompt == TipoPrompt.freemium:
+            system_prompt = FREEMIUM_COMPARISON_SYSTEM_PROMPT
+            # Determinar si es límite alcanzado o comparación de planes
+            if context.get("limite_alcanzado"):
+                user_prompt = build_limit_reached_prompt(
+                    caracteristica=context.get("caracteristica", "Conversaciones"),
+                    limite=context.get("limite", 5),
+                    plan_actual=context.get("plan_actual", "free"),
+                    contexto_uso=context.get("contexto_uso", {})
+                )
+            else:
+                user_prompt = build_plan_comparison_prompt(
+                    consulta_usuario=message,
+                    plan_actual=context.get("plan_actual", "free"),
+                    uso_actual=context.get("uso_actual", {}),
+                    features_bloqueadas=context.get("features_bloqueadas", [])
+                )
+        
+        else:  # TipoPrompt.GENERAL
+            system_prompt = """Eres un asistente experto en motocicletas del sistema RIM- (Ride Intelligence Monitor).
 Ayudas a los usuarios con información sobre sus motocicletas, mantenimiento, problemas técnicos y mejores prácticas.
-Responde de forma clara, profesional y útil."""
+Responde de forma clara, profesional y útil. Si no conoces la respuesta, admítelo y sugiere consultar con un mecánico."""
             user_prompt = message
         
         # Agregar contexto de conversación si existe
@@ -300,73 +600,148 @@ Responde de forma clara, profesional y útil."""
             user_prompt = f"""CONTEXTO DE CONVERSACIÓN PREVIA:
 {conversation_context}
 
-MENSAJE ACTUAL:
+MENSAJE ACTUAL DEL USUARIO:
 {user_prompt}"""
+        
+        # Agregar contexto de moto si está disponible
+        if context.get('moto_data'):
+            from src.chatbot.formatters import format_moto_context_for_llm, format_user_plan_note
+            
+            # Formatear datos de la moto para el LLM
+            moto_context_text = format_moto_context_for_llm(context['moto_data'])
+            
+            # Agregar al system prompt
+            system_prompt += f"\n\n{moto_context_text}"
+            
+            # Agregar nota sobre el plan del usuario
+            user_plan = context['moto_data'].get('user_plan', 'free')
+            plan_note = format_user_plan_note(user_plan)
+            system_prompt += plan_note
         
         return system_prompt, user_prompt
 
-    async def add_feedback(
+    async def get_conversacion_with_messages(
         self,
-        mensaje_id: int,
-        util: bool,
-        feedback: Optional[str] = None
-    ) -> Mensaje:
-        """Agrega feedback a un mensaje del asistente."""
-        mensaje = await self.mensaje_repo.get_by_id(mensaje_id)
-        if not mensaje:
-            raise ValueError(f"Mensaje {mensaje_id} no encontrado")
+        conversation_id: str,
+        usuario_id: int,
+        limit: int = 50
+    ) -> tuple[Conversacion, List[Mensaje]]:
+        """
+        Obtiene una conversación con sus mensajes.
         
-        if not validators.validate_feedback(util, feedback):
-            raise ValueError("Feedback inválido")
+        Args:
+            conversation_id: ID de la conversación
+            usuario_id: ID del usuario (para validar acceso)
+            limit: Límite de mensajes a obtener
+            
+        Returns:
+            Tuple con (conversacion, mensajes)
+            
+        Raises:
+            ValueError: Si el conversation_id es inválido o el usuario no tiene acceso
+        """
+        # Validar formato del conversation_id
+        if not validators.validate_conversation_id(conversation_id):
+            raise ValueError(ERROR_CONVERSATION_ID_INVALID)
         
-        mensaje.util = util
-        mensaje.feedback = feedback
+        conversacion = await self.conversacion_repo.get_by_conversation_id(conversation_id)
         
-        return await self.mensaje_repo.update(mensaje)
-
-    async def clear_conversacion_history(self, conversacion_id: int, usuario_id: int) -> None:
-        """Limpia el historial de una conversación."""
-        conversacion = await self.conversacion_repo.get_by_id(conversacion_id)
         if not conversacion:
-            raise ValueError(f"Conversación {conversacion_id} no encontrada")
+            raise ValueError(ERROR_CONVERSATION_NOT_FOUND.format(conversation_id))
         
-        if not validators.can_clear_history(usuario_id, conversacion.usuario_id):
-            raise ValueError("No tienes permiso para limpiar esta conversación")
+        # Validar acceso del usuario
+        if not validators.can_delete_conversation(usuario_id, conversacion.usuario_id):
+            raise ValueError(ERROR_NO_ACCESS)
         
-        await self.mensaje_repo.delete_by_conversacion(conversacion_id)
-        conversacion.total_mensajes = 0
-        await self.conversacion_repo.update(conversacion)
+        mensajes = await self.mensaje_repo.get_by_conversacion(
+            conversacion.id,
+            limit=limit
+        )
+        
+        return conversacion, mensajes
+
+    async def archivar_conversacion(
+        self,
+        conversation_id: str,
+        usuario_id: int
+    ) -> Conversacion:
+        """
+        Archiva una conversación (la marca como inactiva).
+        
+        Args:
+            conversation_id: ID de la conversación
+            usuario_id: ID del usuario (para validar acceso)
+            
+        Returns:
+            Conversación archivada
+            
+        Raises:
+            ValueError: Si la conversación no existe o el usuario no tiene acceso
+        """
+        # Validar formato del conversation_id
+        if not validators.validate_conversation_id(conversation_id):
+            raise ValueError(ERROR_CONVERSATION_ID_INVALID)
+        
+        conversacion = await self.conversacion_repo.get_by_conversation_id(conversation_id)
+        
+        if not conversacion:
+            raise ValueError(ERROR_CONVERSATION_NOT_FOUND.format(conversation_id))
+        
+        # Validar acceso del usuario
+        if not validators.can_archive_conversation(usuario_id, conversacion.usuario_id):
+            raise ValueError(ERROR_NO_ACCESS)
+        
+        conversacion.activa = False
+        return await self.conversacion_repo.update(conversacion)
+
+    async def delete_conversacion(
+        self,
+        conversation_id: str,
+        usuario_id: int
+    ) -> None:
+        """
+        Elimina una conversación y todos sus mensajes.
+        
+        Args:
+            conversation_id: ID de la conversación
+            usuario_id: ID del usuario (para validar acceso)
+            
+        Raises:
+            ValueError: Si la conversación no existe o el usuario no tiene acceso
+        """
+        # Validar formato del conversation_id
+        if not validators.validate_conversation_id(conversation_id):
+            raise ValueError(ERROR_CONVERSATION_ID_INVALID)
+        
+        conversacion = await self.conversacion_repo.get_by_conversation_id(conversation_id)
+        
+        if not conversacion:
+            raise ValueError(ERROR_CONVERSATION_NOT_FOUND.format(conversation_id))
+        
+        # Validar acceso del usuario
+        if not validators.can_delete_conversation(usuario_id, conversacion.usuario_id):
+            raise ValueError(ERROR_NO_ACCESS)
+        
+        await self.conversacion_repo.delete(conversacion)
 
     async def get_conversacion_stats(
         self,
-        usuario_id: Optional[int] = None
-    ) -> dict[str, Any]:
-        """Obtiene estadísticas del chatbot."""
-        # Total de conversaciones
-        if usuario_id:
-            total_conversaciones = await self.conversacion_repo.count_by_usuario(usuario_id)
-            activas = await self.conversacion_repo.count_by_usuario(usuario_id, solo_activas=True)
-        else:
-            # Stats globales (solo admin)
-            total_conversaciones = 0  # TODO: implementar
-            activas = 0
+        usuario_id: int
+    ) -> Dict[str, Any]:
+        """
+        Obtiene estadísticas de conversaciones del usuario.
         
-        # Métricas de mensajes
-        tiempo_promedio = await self.mensaje_repo.get_tiempo_respuesta_promedio()
-        tasa_utilidad = await self.mensaje_repo.get_tasa_utilidad()
+        Args:
+            usuario_id: ID del usuario
+            
+        Returns:
+            Diccionario con estadísticas
+        """
+        total = await self.conversacion_repo.count_by_usuario(usuario_id, solo_activas=False)
+        activas = await self.conversacion_repo.count_by_usuario(usuario_id, solo_activas=True)
         
         return {
-            "total_conversaciones": total_conversaciones,
+            "total_conversaciones": total,
             "conversaciones_activas": activas,
-            "tiempo_respuesta_promedio_ms": tiempo_promedio or 0,
-            "tasa_utilidad": tasa_utilidad,
+            "conversaciones_archivadas": total - activas
         }
-
-
-def generate_conversation_title(first_message: str, max_length: int = 50) -> str:
-    """Genera un título basado en el primer mensaje."""
-    # Limpiar y truncar
-    titulo = first_message.strip()
-    if len(titulo) > max_length:
-        titulo = titulo[:max_length-3] + "..."
-    return titulo or "Nueva conversación"

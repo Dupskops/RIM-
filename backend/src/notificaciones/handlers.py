@@ -122,10 +122,14 @@ async def handle_password_changed(event) -> None:
 async def handle_falla_critica(event) -> None:
     """
     Handler: Enviar alerta URGENTE cuando se detecta una falla crítica.
-    Evento: FallaCriticaEvent
+    Evento: FallaDetectadaEvent con severidad="critica"
     Canales: SMS + Push + Email (máxima prioridad)
     """
     try:
+        # Solo procesar si es crítica
+        if event.severidad != "critica":
+            return
+            
         logger.critical(f"🚨 FALLA CRÍTICA detectada en moto {event.moto_id}")
         
         async for db in get_db():
@@ -161,9 +165,13 @@ async def handle_falla_critica(event) -> None:
 async def handle_falla_detectada(event) -> None:
     """
     Handler: Notificar cuando se detecta una falla (no crítica).
-    Evento: FallaDetectadaEvent
+    Evento: FallaDetectadaEvent con severidad != "critica"
     """
     try:
+        # No procesar críticas aquí (las maneja handle_falla_critica)
+        if event.severidad == "critica":
+            return
+            
         logger.warning(f"⚠️ Falla detectada en moto {event.moto_id}: {event.tipo}")
         
         async for db in get_db():

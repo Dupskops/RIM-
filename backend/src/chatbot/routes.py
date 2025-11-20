@@ -38,9 +38,8 @@ async def create_conversacion(
     
     conversacion = await use_case.execute(
         usuario_id=current_user.id,
-        titulo=data.titulo,
-        nivel_acceso=current_user.nivel_acceso,
-        moto_id=data.moto_id
+        moto_id=data.moto_id,
+        titulo=data.titulo
     )
     
     return ApiResponse(
@@ -66,6 +65,12 @@ async def send_message(
     - **context**: Contexto adicional (sensores, fallas, etc.)
     - **stream**: Si True, retorna streaming (usar SSE)
     """
+    import time
+    import logging
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    logger.info(f"[DEBUG] Recibida petición POST /chat. Message len: {len(data.message)}")
+
     # Si se solicita streaming, usar endpoint de streaming
     if data.stream:
         raise HTTPException(
@@ -75,25 +80,51 @@ async def send_message(
     
     use_case = use_cases.SendMessageUseCase(session)
     
+    # Convertir tipo_prompt de string a enum si se proporciona
+    tipo_prompt_enum = None
+    if data.tipo_prompt:
+        try:
+            from src.chatbot.models import TipoPrompt
+            tipo_prompt_enum = TipoPrompt(data.tipo_prompt.lower())
+        except (ValueError, AttributeError):
+            pass  # Si no es válido, se detectará automáticamente
+    
+    # Cargar contexto de moto automáticamente si moto_id está presente
+    context = data.context or {}
+    if data.moto_id:
+        try:
+            from src.chatbot.context_builder import build_moto_context
+            
+            # Construir contexto de la moto según el plan del usuario
+            moto_context = await build_moto_context(
+                moto_id=data.moto_id,
+                user_id=current_user.id,
+                db=session
+            )
+            
+            # Agregar al contexto
+            context['moto_data'] = moto_context
+            logger.info(f"[DEBUG] Contexto de moto cargado. Plan: {moto_context.get('user_plan')}")
+        except Exception as e:
+            # Si falla la carga de contexto, continuar sin él
+            logger.warning(f"Error cargando contexto de moto: {e}")
+    
     try:
-        response, conversacion, mensaje = await use_case.execute(
+        response, conversacion, mensaje_usuario, mensaje_asistente = await use_case.execute(
             usuario_id=current_user.id,
             message=data.message,
-            conversation_id=data.conversation_id,
-            nivel_acceso=current_user.nivel_acceso,
             moto_id=data.moto_id,
-            tipo_prompt=data.tipo_prompt,
-            context=getattr(data, 'context', None)
+            conversation_id=data.conversation_id,
+            tipo_prompt=tipo_prompt_enum,
+            context=context
         )
         
         chat_response = schemas.ChatResponse(
             message=response,
             conversation_id=conversacion.conversation_id,
-            mensaje_id=mensaje.id,
-            tokens_usados=mensaje.tokens_usados,
-            tiempo_respuesta_ms=mensaje.tiempo_respuesta_ms,
-            modelo_usado=mensaje.modelo_usado,
-            tipo_prompt=mensaje.tipo_prompt
+            mensaje_usuario_id=mensaje_usuario.id,
+            mensaje_asistente_id=mensaje_asistente.id,
+            tipo_prompt=mensaje_asistente.tipo_prompt
         )
         
         return ApiResponse(
@@ -121,16 +152,24 @@ async def send_message_stream(
     """
     use_case = use_cases.SendMessageStreamUseCase(session)
     
+    # Convertir tipo_prompt de string a enum si se proporciona
+    tipo_prompt_enum = None
+    if data.tipo_prompt:
+        try:
+            from src.chatbot.models import TipoPrompt
+            tipo_prompt_enum = TipoPrompt(data.tipo_prompt.lower())
+        except (ValueError, AttributeError):
+            pass  # Si no es válido, se detectará automáticamente
+    
     async def event_generator():
         """Genera eventos SSE."""
         try:
             async for chunk in use_case.execute(
                 usuario_id=current_user.id,
                 message=data.message,
-                conversation_id=data.conversation_id,
-                nivel_acceso=current_user.nivel_acceso,
                 moto_id=data.moto_id,
-                tipo_prompt=data.tipo_prompt,
+                conversation_id=data.conversation_id,
+                tipo_prompt=tipo_prompt_enum,
                 context=data.context
             ):
                 yield f"data: {chunk}\n\n"
@@ -139,8 +178,8 @@ async def send_message_stream(
             
         except ValueError as e:
             yield f"event: error\ndata: {str(e)}\n\n"
-        except Exception as e:
-            yield f"event: error\ndata: Error procesando mensaje\n\n"
+        except Exception:
+            yield "event: error\ndata: Error procesando mensaje\n\n"
     
     return StreamingResponse(
         event_generator(),
@@ -228,7 +267,7 @@ async def list_conversaciones(
         )
     )
 
-
+"""
 @router.post("/messages/{mensaje_id}/feedback", response_model=ApiResponse[schemas.MensajeResponse])
 async def add_feedback(
     mensaje_id: int,
@@ -236,13 +275,13 @@ async def add_feedback(
     current_user: Usuario = Depends(get_current_user),
     session: AsyncSession = Depends(get_db)
 ) -> ApiResponse[schemas.MensajeResponse]:
-    """
+    
     Agrega feedback a un mensaje del asistente.
     
     - **mensaje_id**: ID del mensaje
     - **util**: Si la respuesta fue útil
     - **feedback**: Comentario adicional (opcional)
-    """
+    
     use_case = use_cases.AddFeedbackUseCase(session)
     
     try:
@@ -261,7 +300,7 @@ async def add_feedback(
         
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
+"""
 
 @router.delete("/{conversation_id}", response_model=SuccessResponse[None], status_code=200)
 async def delete_conversacion(
