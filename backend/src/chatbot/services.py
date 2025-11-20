@@ -472,10 +472,10 @@ class ChatbotService:
         Returns:
             Tuple con (system_prompt, user_prompt)
         """
-        # Obtener historial de mensajes previos (últimos 5 para contexto)
+        # Obtener historial de mensajes previos (últimos 2 para contexto - optimizado)
         mensajes_previos = await self.mensaje_repo.get_ultimos_mensajes(
             conversacion_id,
-            limit=5
+            limit=2
         )
         
         # Construir contexto de conversación
