@@ -19,22 +19,23 @@ export const useMotoStore = create<MotoState>((set) => ({
     selectedMoto: null,
     isLoading: false,
 
-    setMotos: (motos) => set({ motos }),
+    setMotos: (motos) => set({ motos: Array.isArray(motos) ? motos : [] }),
 
     setSelectedMoto: (moto) => set({ selectedMoto: moto }),
 
-    addMoto: (moto) => set((state) => ({ motos: [...state.motos, moto] })),
+    addMoto: (moto) =>
+        set((state) => ({ motos: Array.isArray(state.motos) ? [...state.motos, moto] : [moto] })),
 
     updateMoto: (moto) =>
         set((state) => ({
-            motos: state.motos.map((m) => (m.id === moto.id ? moto : m)),
+            motos: (Array.isArray(state.motos) ? state.motos : []).map((m) => (m.id === moto.id ? moto : m)),
             selectedMoto:
                 state.selectedMoto?.id === moto.id ? moto : state.selectedMoto,
         })),
 
     removeMoto: (motoId) =>
         set((state) => ({
-            motos: state.motos.filter((m) => m.id !== motoId),
+            motos: (Array.isArray(state.motos) ? state.motos : []).filter((m) => m.id !== motoId),
             selectedMoto:
                 state.selectedMoto?.id === motoId ? null : state.selectedMoto,
         })),

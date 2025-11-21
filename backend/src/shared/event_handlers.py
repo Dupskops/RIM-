@@ -296,9 +296,17 @@ async def send_welcome_email(event: Any) -> None:
     """
     Enviar email de bienvenida cuando se registra un usuario.
     Evento escuchado: UserRegisteredEvent (auth)
+    Delega al módulo de notificaciones para crear y enviar el email.
     """
-    logger.info(f"📧 Enviando email de bienvenida a {event.email}")
-    logger.info(f"✅ Email de bienvenida procesado")
+    try:
+        from src.notificaciones.handlers import handle_user_registered
+        
+        logger.info(f"📧 Procesando email de bienvenida a {event.email}")
+        await handle_user_registered(event)
+        logger.info(f"✅ Email de bienvenida procesado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando email de bienvenida: {str(e)}", exc_info=True)
 
 
 async def send_password_reset_email(event: Any) -> None:

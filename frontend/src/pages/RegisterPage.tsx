@@ -16,6 +16,7 @@ const RegisterPage = () => {
     password: '',
     confirmPassword: '',
     nombre: '',
+    apellido: '',
     telefono: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -37,6 +38,7 @@ const RegisterPage = () => {
         email: validatedData.email,
         password: validatedData.password,
         nombre: validatedData.nombre,
+        apellido: validatedData.apellido,
         telefono: validatedData.telefono,
       });
 
@@ -120,7 +122,7 @@ const RegisterPage = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="nombre" className="block text-sm font-medium text-gray-200 mb-2">
-                  Nombre completo
+                  Nombre
                 </label>
                 <input
                   id="nombre"
@@ -132,10 +134,31 @@ const RegisterPage = () => {
                   className={`w-full px-4 py-3 rounded-lg bg-white/5 border ${errors.nombre ? 'border-red-500' : 'border-white/10'
                     } text-white placeholder-[rgba(215,215,215,0.6)] focus:outline-none focus:ring-2 ${errors.nombre ? 'focus:ring-red-500' : 'focus:ring-[var(--bg2)]'
                     }`}
-                  placeholder="Juan Pérez"
+                  placeholder="Juan"
                 />
                 {errors.nombre && (
                   <p className="mt-1 text-xs text-red-400">{errors.nombre}</p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="apellido" className="block text-sm font-medium text-gray-200 mb-2">
+                  Apellido
+                </label>
+                <input
+                  id="apellido"
+                  name="apellido"
+                  type="text"
+                  required
+                  value={formData.apellido}
+                  onChange={handleChange}
+                  className={`w-full px-4 py-3 rounded-lg bg-white/5 border ${errors.apellido ? 'border-red-500' : 'border-white/10'
+                    } text-white placeholder-[rgba(215,215,215,0.6)] focus:outline-none focus:ring-2 ${errors.apellido ? 'focus:ring-red-500' : 'focus:ring-[var(--bg2)]'
+                    }`}
+                  placeholder="Pérez"
+                />
+                {errors.apellido && (
+                  <p className="mt-1 text-xs text-red-400">{errors.apellido}</p>
                 )}
               </div>
 

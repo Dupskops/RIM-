@@ -43,16 +43,12 @@ class NotificacionService:
         mensaje: Optional[str],
         tipo: TipoNotificacion,
         canal: CanalNotificacion,
-        datos_adicionales: Optional[Dict[str, Any]] = None,
-        accion_url: Optional[str] = None,
-        accion_tipo: Optional[str] = None,
         referencia_tipo: Optional[str] = None,
-        referencia_id: Optional[int] = None,
-        expira_en: Optional[datetime] = None
+        referencia_id: Optional[int] = None
     ) -> Notificacion:
         """Crea una nueva notificación."""
         # Validar datos
-        validate_notificacion_data(titulo, mensaje, accion_url)
+        validate_notificacion_data(titulo, mensaje, None)
         validate_referencia(referencia_tipo, referencia_id)
         
         # Crear notificación
@@ -62,12 +58,8 @@ class NotificacionService:
             mensaje=mensaje,
             tipo=tipo,
             canal=canal,
-            datos_adicionales=datos_adicionales or {},
-            accion_url=accion_url,
-            accion_tipo=accion_tipo,
             referencia_tipo=referencia_tipo,
-            referencia_id=referencia_id,
-            expira_en=expira_en
+            referencia_id=referencia_id
         )
         
         return await self.notificacion_repo.create(notificacion)
@@ -78,15 +70,11 @@ class NotificacionService:
         titulo: str,
         mensaje: Optional[str],
         tipo: TipoNotificacion,
-        canal: CanalNotificacion,
-        datos_adicionales: Optional[Dict[str, Any]] = None,
-        accion_url: Optional[str] = None,
-        accion_tipo: Optional[str] = None,
-        expira_en: Optional[datetime] = None
+        canal: CanalNotificacion
     ) -> List[Notificacion]:
         """Crea notificaciones para múltiples usuarios."""
         # Validar datos
-        validate_notificacion_data(titulo, mensaje, accion_url)
+        validate_notificacion_data(titulo, mensaje, None)
         
         # Crear notificaciones
         notificaciones = []
@@ -96,29 +84,28 @@ class NotificacionService:
                 titulo=titulo,
                 mensaje=mensaje,
                 tipo=tipo,
-                canal=canal,
-                datos_adicionales=datos_adicionales or {},
-                accion_url=accion_url,
-                accion_tipo=accion_tipo,
-                expira_en=expira_en
+                canal=canal
             )
             notificaciones.append(notif)
         
         return await self.notificacion_repo.create_many(notificaciones)
 
-    async def enviar_notificacion(self, notificacion_id: int) -> bool:
+    async def enviar_notificacion(
+        self, 
+        notificacion_id: int, 
+        notificacion_obj: Optional[Notificacion] = None
+    ) -> bool:
         """Envía una notificación."""
-        notificacion = await self.notificacion_repo.get_by_id(notificacion_id)
+        if notificacion_obj:
+            notificacion = notificacion_obj
+        else:
+            notificacion = await self.notificacion_repo.get_by_id(notificacion_id)
+            
         if not notificacion:
             logger.error(f"Notificación {notificacion_id} no encontrada")
             return False
         
-        # Verificar si no está expirada
-        if notificacion.esta_expirada:
-            logger.warning(f"Notificación {notificacion_id} expirada")
-            notificacion.estado = EstadoNotificacion.FALLIDA
-            await self.notificacion_repo.update(notificacion)
-            return False
+
         
         # Obtener preferencias del usuario
         preferencia = await self.preferencia_repo.get_or_create(notificacion.usuario_id)
@@ -238,10 +225,66 @@ class NotificacionService:
 
     # Métodos privados para envío por canal
     async def _enviar_email(self, notificacion: Notificacion) -> bool:
-        """Envía notificación por email."""
-        # TODO: Implementar integración con servicio de email
-        logger.info(f"Enviando email para notificación {notificacion.id}")
-        return True
+        """Envía notificación por email usando Gmail SMTP."""
+        try:
+            from src.notificaciones.email_service import email_service
+            
+            logger.info(f"📧 Enviando email para notificación {notificacion.id}")
+            
+            # Obtener email del usuario - primero intentar atributos temporales, luego relación
+            email_destino = getattr(notificacion, 'email_destino', None)
+            nombre = getattr(notificacion, 'nombre_usuario', None)
+            
+            if not email_destino:
+                # Si no hay email temporal, obtener del usuario
+                if hasattr(notificacion, 'usuario') and notificacion.usuario:
+                    email_destino = notificacion.usuario.email
+                    nombre = notificacion.usuario.nombre
+                else:
+                    logger.error(f"No se encontró email para notificación {notificacion.id}")
+                    return False
+            
+            # Determinar tipo de email y enviar
+            if "bienvenida" in notificacion.titulo.lower() or "bienvenido" in notificacion.titulo.lower():
+                # Email de bienvenida
+                if not nombre:
+                    nombre = notificacion.mensaje.split(",")[0].replace("Hola ", "").strip()
+                
+                exito = email_service.send_welcome_email(
+                    to_email=email_destino,
+                    nombre=nombre,
+                    metadata={}
+                )
+            else:
+                # Email genérico (para otros tipos de notificaciones)
+                exito = email_service.send_email(
+                    to_email=email_destino,
+                    subject=notificacion.titulo,
+                    html_content=f"""
+                    <html>
+                        <body style="font-family: Arial, sans-serif; padding: 20px;">
+                            <h2>{notificacion.titulo}</h2>
+                            <p>{notificacion.mensaje}</p>
+                            <hr>
+                            <p style="color: #666; font-size: 12px;">
+                                RIM - Sistema Inteligente de Moto
+                            </p>
+                        </body>
+                    </html>
+                    """,
+                    plain_content=notificacion.mensaje
+                )
+            
+            if exito:
+                logger.info(f"✅ Email enviado exitosamente a {email_destino}")
+            else:
+                logger.error(f"❌ Falló el envío de email a {email_destino}")
+            
+            return exito
+            
+        except Exception as e:
+            logger.error(f"❌ Error enviando email para notificación {notificacion.id}: {e}")
+            return False
 
     async def _enviar_push(self, notificacion: Notificacion) -> bool:
         """Envía notificación push."""

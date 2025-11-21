@@ -42,12 +42,8 @@ class CrearNotificacionUseCase:
         mensaje: Optional[str],
         tipo: TipoNotificacion,
         canal: CanalNotificacion,
-        datos_adicionales: Optional[Dict[str, Any]] = None,
-        accion_url: Optional[str] = None,
-        accion_tipo: Optional[str] = None,
         referencia_tipo: Optional[str] = None,
-        referencia_id: Optional[int] = None,
-        expira_en: Optional[datetime] = None
+        referencia_id: Optional[int] = None
     ) -> Notificacion:
         """Crea una nueva notificación."""
         # Crear notificación
@@ -57,12 +53,8 @@ class CrearNotificacionUseCase:
             mensaje=mensaje,
             tipo=tipo,
             canal=canal,
-            datos_adicionales=datos_adicionales,
-            accion_url=accion_url,
-            accion_tipo=accion_tipo,
             referencia_tipo=referencia_tipo,
-            referencia_id=referencia_id,
-            expira_en=expira_en
+            referencia_id=referencia_id
         )
         
         # Emitir evento
@@ -96,11 +88,7 @@ class CrearNotificacionMasivaUseCase:
         titulo: str,
         mensaje: Optional[str],
         tipo: TipoNotificacion,
-        canal: CanalNotificacion,
-        datos_adicionales: Optional[Dict[str, Any]] = None,
-        accion_url: Optional[str] = None,
-        accion_tipo: Optional[str] = None,
-        expira_en: Optional[datetime] = None
+        canal: CanalNotificacion
     ) -> List[Notificacion]:
         """Crea notificaciones para múltiples usuarios."""
         # Crear notificaciones
@@ -109,11 +97,7 @@ class CrearNotificacionMasivaUseCase:
             titulo=titulo,
             mensaje=mensaje,
             tipo=tipo,
-            canal=canal,
-            datos_adicionales=datos_adicionales,
-            accion_url=accion_url,
-            accion_tipo=accion_tipo,
-            expira_en=expira_en
+            canal=canal
         )
         
         # Emitir evento

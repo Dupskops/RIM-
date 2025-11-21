@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Bot, Send, Loader2, Sparkles, RefreshCcw, Trash2, X, MoreVertical, Plus, Clock } from 'lucide-react';
+import { chatbotService } from '@/services/chatbot.service';  // AGREGAR
+import { useMotoStore } from '@/store/moto.store';            // AGREGAR
+import toast from 'react-hot-toast';                          // AGREGAR
 
 type Msg = {
     id: string;
@@ -22,14 +25,22 @@ const initialMsgs: Msg[] = [
 
 export default function ChatbotPage() {
     const navigate = useNavigate();
-    type Conversation = { id: string; title?: string; msgs: Msg[]; createdAt: number; updatedAt: number };
-
+    const { selectedMoto } = useMotoStore();  // AGREGAR
+    type Conversation = {
+        id: string;
+        title?: string;
+        msgs: Msg[];
+        createdAt: number;
+        updatedAt: number;
+        conversation_id?: string; // AGREGAR - ID de conversación del backend
+    };
     const firstConvId = Date.now().toString();
     const now = Date.now();
     const [conversations, setConversations] = useState<Conversation[]>(() => [
         { id: firstConvId, title: undefined, msgs: initialMsgs, createdAt: now, updatedAt: now },
     ]);
     const [currentConvId, setCurrentConvId] = useState<string>(firstConvId);
+    const [loadingHistory, setLoadingHistory] = useState(false);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [connected, setConnected] = useState(true);
@@ -39,6 +50,58 @@ export default function ChatbotPage() {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const menuRef = useRef<HTMLDivElement | null>(null);
     const historyRef = useRef<HTMLDivElement | null>(null);
+
+    // Cargar conversaciones del backend
+    useEffect(() => {
+        const loadConversations = async () => {
+            if (!selectedMoto) return;
+            
+            setLoadingHistory(true);
+            try {
+                // Obtener usuario_id del localStorage o del auth store
+                const userStr = localStorage.getItem('auth-storage');
+                if (!userStr) return;
+                
+                const authData = JSON.parse(userStr);
+                const userId = authData?.state?.user?.id;
+                if (!userId) return;
+
+                const response = await chatbotService.getConversaciones(
+                    userId,
+                    selectedMoto.id,
+                    true, // solo activas
+                    1,
+                    50
+                );
+
+                if (response.success && response.data) {
+                    // Convertir conversaciones del backend a formato local
+                    const backendConvs = response.data
+                        .filter(c => c.total_mensajes > 0) // Solo conversaciones con mensajes
+                        .map(c => ({
+                            id: c.conversation_id,
+                            title: c.titulo || undefined,
+                            msgs: [] as Msg[], // Los mensajes se cargarán cuando se abra la conversación
+                            createdAt: new Date(c.created_at).getTime(),
+                            updatedAt: new Date(c.ultima_actividad).getTime(),
+                            conversation_id: c.conversation_id,
+                        }));
+
+                    // Mantener la conversación actual si no hay conversaciones del backend
+                    if (backendConvs.length > 0) {
+                        setConversations(backendConvs);
+                        setCurrentConvId(backendConvs[0].id);
+                    }
+                }
+            } catch (error) {
+                console.error('Error al cargar conversaciones:', error);
+            } finally {
+                setLoadingHistory(false);
+            }
+        };
+
+        loadConversations();
+    }, [selectedMoto]);
 
     useEffect(() => {
         // scroll to bottom when msgs change
@@ -58,23 +121,97 @@ export default function ChatbotPage() {
         return () => document.removeEventListener('keydown', onKey);
     }, [showHistory]);
 
-    function sendMessage(text: string) {
+    async function sendMessage(text: string) {
         if (!text.trim()) return;
+
+        // Verificar que haya una moto seleccionada
+        if (!selectedMoto) {
+            toast.error('Por favor selecciona una moto primero');
+            return;
+        }
         const userMsg: Msg = { id: Date.now().toString(), from: 'user', text: text.trim() };
-    setConversations((prev) => prev.map((c) => c.id === currentConvId ? { ...c, msgs: [...c.msgs, userMsg], updatedAt: Date.now() } : c));
+        setConversations((prev) => prev.map((c) => c.id === currentConvId ? { ...c, msgs: [...c.msgs, userMsg], updatedAt: Date.now() } : c));
         setInput('');
         setLoading(true);
+        try {
+            // Obtener el conversation_id de la conversación actual si existe
+            const currentConv = conversations.find((c) => c.id === currentConvId);
 
-        // simulate bot reply
-        setTimeout(() => {
-            const reply = sampleReplies[Math.floor(Math.random() * sampleReplies.length)];
-            const botMsg: Msg = { id: 'b' + Date.now().toString(), from: 'bot', text: reply };
-            setConversations((prev) => prev.map((c) => c.id === currentConvId ? { ...c, msgs: [...c.msgs, botMsg], updatedAt: Date.now() } : c));
+            // Llamar a la API real
+            const response = await chatbotService.sendChatMessage({
+                message: text.trim(),
+                moto_id: selectedMoto.id,
+                conversation_id: currentConv?.conversation_id,
+                stream: false,
+            });
+            // Crear mensaje del bot con la respuesta
+            const botMsg: Msg = {
+                id: 'b' + Date.now().toString(),
+                from: 'bot',
+                text: response.data.message
+            };
+            // Actualizar la conversación con el mensaje del bot y guardar el conversation_id
+            setConversations((prev) => prev.map((c) =>
+                c.id === currentConvId
+                    ? {
+                        ...c,
+                        msgs: [...c.msgs, botMsg],
+                        updatedAt: Date.now(),
+                        conversation_id: response.data.conversation_id
+                        // Guardar el ID de conversación del backend
+                    }
+                    : c
+            ));
+            setConnected(true);
+        } catch (error: any) {
+            console.error('Error al enviar mensaje:', error);
+            toast.error(error.response?.data?.detail || 'Error al enviar mensaje');
+            setConnected(false);
+
+            // Mensaje de error del bot
+            const errorMsg: Msg = {
+                id: 'e' + Date.now().toString(),
+                from: 'bot',
+                text: 'Lo siento, hubo un error al procesar tu mensaje. Por favor intenta de nuevo.'
+            };
+            setConversations((prev) => prev.map((c) =>
+                c.id === currentConvId
+                    ? { ...c, msgs: [...c.msgs, errorMsg], updatedAt: Date.now() }
+                    : c
+            ));
+        } finally {
             setLoading(false);
-        }, 900 + Math.random() * 700);
+        }
     }
 
     const currentConv = conversations.find((c) => c.id === currentConvId) as Conversation;
+
+    // Cargar mensajes de una conversación específica
+    const loadConversationMessages = async (conversationId: string) => {
+        try {
+            const response = await chatbotService.getConversacionById(conversationId);
+            
+            if (response.success && response.data.mensajes) {
+                // Convertir mensajes del backend al formato local
+                const msgs: Msg[] = response.data.mensajes.map(m => ({
+                    id: String(m.id),
+                    from: m.role === 'user' ? 'user' : 'bot',
+                    text: m.contenido,
+                    time: new Date(m.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                }));
+
+                // Actualizar la conversación con los mensajes cargados
+                setConversations(prev => prev.map(c => 
+                    c.id === conversationId 
+                        ? { ...c, msgs, title: response.data.conversacion.titulo || c.title }
+                        : c
+                ));
+            }
+        } catch (error) {
+            console.error('Error al cargar mensajes:', error);
+            toast.error('Error al cargar los mensajes de la conversación');
+        }
+    };
 
     function generateTitle(conv: Conversation) {
         // If conversation already has an explicit title, use it
@@ -194,19 +331,31 @@ export default function ChatbotPage() {
                             </div>
 
                             <div className="max-h-80 overflow-y-auto divide-y divide-[rgba(255,255,255,0.03)]">
-                                {conversations.length > 0 ? (
+                                {loadingHistory ? (
+                                    <div className="p-8 flex flex-col items-center justify-center gap-3">
+                                        <Loader2 className="animate-spin text-[var(--accent)]" size={32} />
+                                        <div className="text-sm text-[var(--muted)]">Cargando conversaciones...</div>
+                                    </div>
+                                ) : conversations.length > 0 ? (
                                     conversations.map((conv) => (
                                         <button
                                             key={conv.id}
-                                            onClick={() => { setCurrentConvId(conv.id); setShowHistory(false); }}
+                                            onClick={() => { 
+                                                setCurrentConvId(conv.id); 
+                                                setShowHistory(false);
+                                                // Cargar mensajes si la conversación no los tiene aún
+                                                if (conv.msgs.length === 0 && conv.conversation_id) {
+                                                    loadConversationMessages(conv.conversation_id);
+                                                }
+                                            }}
                                             aria-label={`Abrir ${generateTitle(conv)}`}
                                             className={`w-full text-left px-3 py-3 flex items-start gap-3 transition-all duration-150 focus:outline-none ${currentConvId === conv.id ? 'bg-[rgba(255,255,255,0.03)] ring-1 ring-[var(--accent)]' : 'hover:bg-[rgba(255,255,255,0.02)]'}`}
                                         >
-                                            <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[rgba(255,255,255,0.02)] flex items-center justify-center text-[var(--accent)] font-semibold">{generateTitle(conv).split(' ')[0]?.slice(0,2).toUpperCase()}</div>
+                                            <div className="flex-shrink-0 w-10 h-10 rounded-md bg-[rgba(255,255,255,0.02)] flex items-center justify-center text-[var(--accent)] font-semibold">{generateTitle(conv).split(' ')[0]?.slice(0, 2).toUpperCase()}</div>
 
                                             <div className="flex-1 min-w-0">
                                                 <div className="text-sm font-semibold text-[var(--bg)] truncate">{generateTitle(conv)}</div>
-                                                <div className="text-xs text-[var(--muted)] truncate">Último: {conv.msgs.length ? (conv.msgs[conv.msgs.length - 1].text.length > 60 ? conv.msgs[conv.msgs.length - 1].text.slice(0,57) + '...' : conv.msgs[conv.msgs.length - 1].text) : 'Sin mensajes'}</div>
+                                                <div className="text-xs text-[var(--muted)] truncate">Último: {conv.msgs.length ? (conv.msgs[conv.msgs.length - 1].text.length > 60 ? conv.msgs[conv.msgs.length - 1].text.slice(0, 57) + '...' : conv.msgs[conv.msgs.length - 1].text) : 'Sin mensajes'}</div>
                                             </div>
 
                                             <div className="ml-3 flex-shrink-0 flex flex-col items-end gap-1 text-right">

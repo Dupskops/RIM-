@@ -88,30 +88,30 @@ class Notificacion(BaseModel):
         comment="Mensaje de la notificación"
     )
     
-    tipo: Mapped[TipoNotificacion] = mapped_column(
-        SQLEnum(TipoNotificacion, name="tipo_notificacion", native_enum=True),
+    tipo: Mapped[str] = mapped_column(
+        SQLEnum("info", "warning", "alert", "success", "error", name="tipo_notificacion", native_enum=True),
         nullable=False,
         comment="Tipo: info, warning, alert, success, error"
     )
     
     # Canal y estado
-    canal: Mapped[CanalNotificacion] = mapped_column(
-        SQLEnum(CanalNotificacion, name="canal_notificacion", native_enum=True),
+    canal: Mapped[str] = mapped_column(
+        SQLEnum("in_app", "email", "push", "sms", name="canal_notificacion", native_enum=True),
         nullable=False,
         comment="Canal: in_app, email, push, sms"
     )
     
-    estado: Mapped[EstadoNotificacion] = mapped_column(
-        SQLEnum(EstadoNotificacion, name="estado_notificacion", native_enum=True),
+    estado: Mapped[str] = mapped_column(
+        SQLEnum("pendiente", "enviada", "leida", "fallida", name="estado_notificacion", native_enum=True),
         nullable=False,
-        default=EstadoNotificacion.PENDIENTE,
+        default="pendiente",
         server_default="pendiente",
         comment="Estado: pendiente, enviada, leida, fallida"
     )
     
     # Referencia (opcional - a qué objeto hace referencia)
     referencia_tipo: Mapped[Optional[str]] = mapped_column(
-        SQLEnum(ReferenciaNotificacion, name="referencia_tipo_enum", native_enum=True),
+        SQLEnum("falla", "mantenimiento", "sensor", "prediccion", name="referencia_tipo_enum", native_enum=True),
         nullable=True,
         comment="Tipo de referencia: falla, mantenimiento, sensor, prediccion"
     )
@@ -185,9 +185,9 @@ class Notificacion(BaseModel):
             "usuario_id": self.usuario_id,
             "titulo": self.titulo,
             "mensaje": self.mensaje,
-            "tipo": self.tipo.value,
-            "canal": self.canal.value,
-            "estado": self.estado.value,
+            "tipo": self.tipo,
+            "canal": self.canal,
+            "estado": self.estado,
             "referencia_tipo": self.referencia_tipo,
             "referencia_id": self.referencia_id,
             "leida": self.leida,
@@ -259,23 +259,23 @@ class PreferenciaNotificacion(BaseModel):
         nullable=True,
         comment="Hora fin período No molestar (ej: 08:00)"
     )
-    
     # Configuración adicional (JSONB)
     configuracion_adicional: Mapped[Optional[Dict[str, Any]]] = mapped_column(
         JSONB,
         nullable=True,
         comment="Configuración extra del usuario"
     )
+
+    # Excluir deleted_at ya que no existe en la tabla
+    deleted_at = None
     
     def __repr__(self) -> str:
         return f"<PreferenciaNotificacion usuario_id={self.usuario_id}>"
     
     def canal_habilitado(self, canal: CanalNotificacion) -> bool:
         """Verifica si un canal está habilitado."""
-        if not self.canales_habilitados:
-            return False
         
-        canal_key = canal.value  # "in_app", "email", "push", "sms"
+        canal_key = canal  # "in_app", "email", "push", "sms"
         return self.canales_habilitados.get(canal_key, False)
     
     def tipo_notificacion_habilitado(self, tipo: str) -> bool:

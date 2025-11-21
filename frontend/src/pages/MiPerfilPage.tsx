@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Wrench, Edit2 } from 'lucide-react';
+import { User, Wrench, Edit2, LogOut } from 'lucide-react';
 import { useAuthStore } from '@/store';
 import { useNavigate } from '@tanstack/react-router';
 
@@ -89,22 +89,26 @@ const MiPerfilPage: React.FC = () => {
 
     // planes disponibles
     const [plans] = useState<Plan[]>(() => [
-        { id: 1, nombre: 'Freemium', precio: 'Gratis', resumen: 'Acceso a funciones básicas de monitoreo y chatbot limitado', incluye: 
-            ['Registro de vehículo', 
-            'Historial básico', 
-            'Notificaciones básicas', 
-            'Chatbot con límite de consultas',
-            'Acceso completo a la app con límite de interacciones'] },
-        { id: 2, nombre: 'Premium', precio: '$9.90/mes', resumen: 'Soporte completo, sin límites y funciones avanzadas', incluye: 
-            [ 'Recordatorios personalizados', 
-            'Descuentos en talleres', 
-            'Soporte prioritario', 
-            'Reportes avanzados', 
-            'Acceso ilimitado al chatbot',
-            'Consultas ilimitadas al chatbot',
-            'Acceso a funciones exclusivas de la app',
-            'Análisis de datos detallado',
-            'Asesoramiento personalizado en mantenimiento'] },
+        {
+            id: 1, nombre: 'Freemium', precio: 'Gratis', resumen: 'Acceso a funciones básicas de monitoreo y chatbot limitado', incluye:
+                ['Registro de vehículo',
+                    'Historial básico',
+                    'Notificaciones básicas',
+                    'Chatbot con límite de consultas',
+                    'Acceso completo a la app con límite de interacciones']
+        },
+        {
+            id: 2, nombre: 'Premium', precio: '$9.90/mes', resumen: 'Soporte completo, sin límites y funciones avanzadas', incluye:
+                ['Recordatorios personalizados',
+                    'Descuentos en talleres',
+                    'Soporte prioritario',
+                    'Reportes avanzados',
+                    'Acceso ilimitado al chatbot',
+                    'Consultas ilimitadas al chatbot',
+                    'Acceso a funciones exclusivas de la app',
+                    'Análisis de datos detallado',
+                    'Asesoramiento personalizado en mantenimiento']
+        },
     ]);
 
     const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
@@ -168,15 +172,15 @@ const MiPerfilPage: React.FC = () => {
                         ) : (
                             <div className="space-y-3">
                                 <label className="text-xs">Nombre completo</label>
-                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.nombre} onChange={(e) => setTempPersonal(t => ({...t, nombre: e.target.value}))} />
+                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.nombre} onChange={(e) => setTempPersonal(t => ({ ...t, nombre: e.target.value }))} />
                                 <label className="text-xs">DNI / Documento</label>
-                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.documento} onChange={(e) => setTempPersonal(t => ({...t, documento: e.target.value}))} />
+                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.documento} onChange={(e) => setTempPersonal(t => ({ ...t, documento: e.target.value }))} />
                                 <label className="text-xs">Correo electrónico</label>
-                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.email} onChange={(e) => setTempPersonal(t => ({...t, email: e.target.value}))} />
+                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.email} onChange={(e) => setTempPersonal(t => ({ ...t, email: e.target.value }))} />
                                 <label className="text-xs">Teléfono</label>
-                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.telefono} onChange={(e) => setTempPersonal(t => ({...t, telefono: e.target.value}))} />
+                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.telefono} onChange={(e) => setTempPersonal(t => ({ ...t, telefono: e.target.value }))} />
                                 <label className="text-xs">Dirección</label>
-                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.direccion} onChange={(e) => setTempPersonal(t => ({...t, direccion: e.target.value}))} />
+                                <input className="w-full p-2 rounded bg-[var(--bg)] text-white" value={tempPersonal.direccion} onChange={(e) => setTempPersonal(t => ({ ...t, direccion: e.target.value }))} />
                                 <div className="flex gap-2 mt-2">
                                     <button onClick={savePersonal} className="px-3 py-2 rounded bg-[var(--accent)] text-[#071218]">Guardar</button>
                                     <button onClick={cancelPersonal} className="px-3 py-2 rounded bg-white/5">Cancelar</button>
@@ -232,9 +236,9 @@ const MiPerfilPage: React.FC = () => {
                         <div className="bg-[var(--card)] rounded-xl p-5">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="font-semibold text-[var(--color-2)]">Diagnósticos y Mantenimiento</h3>
-                                <button 
-                                onClick={() => navigate({ to: '/app/historial' })}
-                                className="text-[var(--color-2)] hover:text-[var(--accent)]">Ver historial completo</button>
+                                <button
+                                    onClick={() => navigate({ to: '/app/historial' })}
+                                    className="text-[var(--color-2)] hover:text-[var(--accent)]">Ver historial completo</button>
                             </div>
 
                             <div className="space-y-3">
@@ -259,7 +263,7 @@ const MiPerfilPage: React.FC = () => {
                             </div>
                         </div>
 
-                            <div className="bg-[var(--card)] rounded-xl p-5">
+                        <div className="bg-[var(--card)] rounded-xl p-5">
                             <div className="flex items-center justify-between mb-3">
                                 <h3 className="font-semibold text-[var(--color-2)]">Configuraciones</h3>
                                 <button onClick={() => setEditSettings((s) => !s)} className="text-[var(--color-2)] hover:text-[var(--accent)]"><Edit2 /></button>
@@ -273,16 +277,16 @@ const MiPerfilPage: React.FC = () => {
                                 </div>
                             ) : (
                                 <div className="space-y-3">
-                                    <label className="flex items-center gap-2"><input type="checkbox" checked={user.preferencias.app} onChange={(e) => setUser(u => ({...u, preferencias: {...u.preferencias, app: e.target.checked}}))} /> Notificaciones en la app</label>
-                                    <label className="flex items-center gap-2"><input type="checkbox" checked={user.preferencias.correo} onChange={(e) => setUser(u => ({...u, preferencias: {...u.preferencias, correo: e.target.checked}}))} /> Notificaciones por correo</label>
-                                    <label className="flex items-center gap-2"><input type="checkbox" checked={user.preferencias.sms} onChange={(e) => setUser(u => ({...u, preferencias: {...u.preferencias, sms: e.target.checked}}))} /> Notificaciones por SMS</label>
+                                    <label className="flex items-center gap-2"><input type="checkbox" checked={user.preferencias.app} onChange={(e) => setUser(u => ({ ...u, preferencias: { ...u.preferencias, app: e.target.checked } }))} /> Notificaciones en la app</label>
+                                    <label className="flex items-center gap-2"><input type="checkbox" checked={user.preferencias.correo} onChange={(e) => setUser(u => ({ ...u, preferencias: { ...u.preferencias, correo: e.target.checked } }))} /> Notificaciones por correo</label>
+                                    <label className="flex items-center gap-2"><input type="checkbox" checked={user.preferencias.sms} onChange={(e) => setUser(u => ({ ...u, preferencias: { ...u.preferencias, sms: e.target.checked } }))} /> Notificaciones por SMS</label>
                                     <div className="flex gap-2 mt-2">
                                         <button onClick={() => setEditSettings(false)} className="px-3 py-2 rounded bg-[var(--accent)] text-[#071218]">Guardar</button>
                                     </div>
                                 </div>
                             )}
                         </div>
-                        
+
                         {/* Sección de Planes */}
                         <div className="bg-[var(--card)] rounded-xl p-5">
                             <div className="flex items-center justify-between mb-3">
@@ -310,6 +314,22 @@ const MiPerfilPage: React.FC = () => {
                         </div>
                     </div>
                 </section>
+
+                {/* Botón de cerrar sesión */}
+                <div className="mt-8 flex justify-center">
+                    <button
+                        onClick={() => {
+                            const logout = useAuthStore.getState().logout;
+                            logout();
+                            navigate({ to: '/auth/login' });
+                        }}
+                        className="px-6 py-3 rounded-lg bg-red-500/80 hover:bg-red-500 text-white font-semibold flex items-center gap-2 transition-all"
+                    >
+                        <LogOut size={20} />
+                        Cerrar sesión
+                    </button>
+                </div>
+
                 {/* Modal / Pop-up para detalles del plan */}
                 {selectedPlan && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={closePlanModal}>

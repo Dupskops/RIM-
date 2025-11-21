@@ -27,14 +27,16 @@ def validate_mensaje(mensaje: Optional[str]) -> None:
         raise ValueError("El mensaje no puede exceder los 1000 caracteres")
 
 #Valida la url 
-def validate_accion_url(accion_url: str):
+def validate_accion_url(accion_url: Optional[str]):
     import re
     import logging
     logger = logging.getLogger(__name__)
 
     logger.info(f"📩 Recibida URL: {accion_url}")
+    
+    # Si no hay URL, es válido (es opcional)
     if not accion_url:
-        raise ValueError("La URL de acción está vacía")
+        return
     
     pattern = r"^https?://"
     if not re.match(pattern, accion_url):
@@ -127,11 +129,11 @@ def puede_enviar_notificacion(
     
     # Verificar canal habilitado
     if not puede_enviar_por_canal(preferencia, canal):
-        return False, f"Canal {canal.value} deshabilitado"
+        return False, f"Canal {canal} deshabilitado"
     
     # Verificar tipo de notificación habilitado
     if not puede_enviar_tipo_notificacion(preferencia, tipo):
-        return False, f"Tipo de notificación {tipo.value} deshabilitado"
+        return False, f"Tipo de notificación {tipo} deshabilitado"
     
     return True, None
 

@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import apiClient from '@/config/api-client';
-import { API_ENDPOINTS } from '@/config/api-endpoints';
+import { MOTOS_ENDPOINTS } from '@/config/api-endpoints';
 import { useMotoStore } from '@/store';
+import toast from 'react-hot-toast';
+
+interface ModeloDisponible {
+    id: number;
+    nombre: string;
+    marca: string;
+    año: number;
+    cilindrada: string;
+}
 
 interface NewMoto {
     vin: string;
-    modelo: string;
-    anio: number;
+    modelo_moto_id: number;
     placa?: string | null;
     color?: string | null;
-    kilometraje: number;
+    kilometraje_actual: string;
     observaciones?: string | null;
 }
 
@@ -24,21 +32,40 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
     const navigate = useNavigate();
 
     const [vin, setVin] = useState('');
-    const [modelo, setModelo] = useState('');
-    const [anio, setAnio] = useState<number>(new Date().getFullYear());
+    const [modeloMotoId, setModeloMotoId] = useState<number>(0);
     const [placa, setPlaca] = useState('');
     const [color, setColor] = useState('');
     const [kilometraje, setKilometraje] = useState<number>(0);
     const [observaciones, setObservaciones] = useState('');
 
+    const [modelosDisponibles, setModelosDisponibles] = useState<ModeloDisponible[]>([]);
+    const [loadingModelos, setLoadingModelos] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
 
+    useEffect(() => {
+        fetchModelosDisponibles();
+    }, []);
+
+    const fetchModelosDisponibles = async () => {
+        setLoadingModelos(true);
+        try {
+            const response = await apiClient.get(MOTOS_ENDPOINTS.MODELOS_DISPONIBLES);
+            if (response.data.success && response.data.data) {
+                setModelosDisponibles(response.data.data);
+            }
+        } catch (error: any) {
+            console.error('Error al cargar modelos:', error);
+            toast.error('Error al cargar modelos disponibles');
+        } finally {
+            setLoadingModelos(false);
+        }
+    };
+
     const resetForm = () => {
         setVin('');
-        setModelo('');
-        setAnio(new Date().getFullYear());
+        setModeloMotoId(0);
         setPlaca('');
         setColor('');
         setKilometraje(0);
@@ -54,48 +81,43 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
             setFormError('El VIN debe tener 17 caracteres');
             return;
         }
-        if (!modelo || modelo.trim().length < 2) {
-            setFormError('Ingrese el modelo');
-            return;
-        }
-        const yearNum = Number(anio);
-        const current = new Date().getFullYear();
-        if (isNaN(yearNum) || yearNum < 1990 || yearNum > current + 1) {
-            setFormError(`Año inválido (1990 - ${current + 1})`);
+        if (!modeloMotoId || modeloMotoId === 0) {
+            setFormError('Seleccione un modelo de moto');
             return;
         }
 
         const payload: NewMoto = {
             vin: vin.trim(),
-            modelo: modelo.trim(),
-            anio: yearNum,
+            modelo_moto_id: modeloMotoId,
             placa: placa?.trim() || null,
             color: color?.trim() || null,
-            kilometraje: kilometraje || 0,
+            kilometraje_actual: String(kilometraje || 0),
             observaciones: observaciones?.trim() || null,
         };
 
         setIsSubmitting(true);
         try {
-            const resp = await apiClient.post(API_ENDPOINTS.MOTOS.BASE, payload);
-            const newMoto = resp.data;
-            addMoto(newMoto);
-            setShowSuccess(true);
-            resetForm();
-            onClose();
-            // Redirigir al Garaje después del registro
-            navigate({ to: '/app/garaje' });
-        } catch (err) {
-            let msg = 'Error al registrar moto';
-            if (err instanceof Error) msg = err.message;
-            else {
-                try {
-                    msg = JSON.stringify(err);
-                } catch {
-                    // ignore
-                }
+            const resp = await apiClient.post(MOTOS_ENDPOINTS.BASE, payload);
+            console.log('Respuesta crear moto:', resp?.data ?? resp);
+            if (resp.data && resp.data.success && resp.data.data) {
+                const newMoto = resp.data.data;
+                addMoto(newMoto);
+                toast.success('Moto registrada exitosamente');
+                setShowSuccess(true);
+                resetForm();
+                onClose();
+                // Redirigir al Garaje después del registro
+                navigate({ to: '/app/garaje' });
+            } else {
+                const msg = resp.data?.message || 'Error al registrar moto';
+                setFormError(msg);
+                toast.error(msg);
             }
-            setFormError(msg);
+        } catch (err: any) {
+            console.error('Error al registrar moto:', err);
+            const errorMessage = err.response?.data?.message || 'Error al registrar moto';
+            setFormError(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setIsSubmitting(false);
         }
@@ -107,7 +129,7 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
         <>
             {showForm && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center ">
-                    <div className="absolute inset-0 bg-black/60" onClick={onClose}  />
+                    <div className="absolute inset-0 bg-black/60" onClick={onClose} />
                     <form onSubmit={handleSubmit} className="relative z-50 w-full max-w-lg bg-[var(--card)] rounded-lg p-6 m-4 shadow-2xl">
                         <h3 className="text-lg font-bold mb-3 text-white">Añadir moto</h3>
                         <div className="grid grid-cols-1 gap-3">
@@ -115,18 +137,22 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
                             <input value={vin} onChange={(e) => setVin(e.target.value.toUpperCase())} maxLength={17} className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-white" />
 
                             <label className="text-xs text-[var(--color-2)]">Modelo</label>
-                            <input value={modelo} onChange={(e) => setModelo(e.target.value)} className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-white" />
+                            <select
+                                value={modeloMotoId}
+                                onChange={(e) => setModeloMotoId(Number(e.target.value))}
+                                className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-[var(--muted)]"
+                                disabled={loadingModelos}
+                            >
+                                <option value={0}>{loadingModelos ? 'Cargando modelos...' : 'Seleccione un modelo'}</option>
+                                {modelosDisponibles.map((modelo) => (
+                                    <option key={modelo.id} value={modelo.id}>
+                                        {modelo.nombre}
+                                    </option>
+                                ))}
+                            </select>
 
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="text-xs text-[var(--color-2)]">Año</label>
-                                    <input value={anio} onChange={(e) => setAnio(Number(e.target.value))} type="number" className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-white" />
-                                </div>
-                                <div>
-                                    <label className="text-xs text-[var(--color-2)]">Placa (opcional)</label>
-                                    <input value={placa} onChange={(e) => setPlaca(e.target.value.toUpperCase())} className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-white" />
-                                </div>
-                            </div>
+                            <label className="text-xs text-[var(--color-2)]">Placa (opcional)</label>
+                            <input value={placa} onChange={(e) => setPlaca(e.target.value.toUpperCase())} className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-white" />
 
                             <label className="text-xs text-[var(--color-2)]">Color (opcional)</label>
                             <input value={color} onChange={(e) => setColor(e.target.value)} className="w-full p-2 rounded-md bg-[rgba(255,255,255,0.03)] text-white" />
@@ -146,9 +172,11 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
                         </div>
                     </form>
                 </div>
-            )}
+            )
+        }
 
-            {showSuccess && (
+        {
+            showSuccess && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center">
                     <div className="absolute inset-0 bg-black/60" onClick={() => setShowSuccess(false)} />
                     <div className="relative z-50 w-full max-w-xs bg-[var(--card)] rounded-lg p-6 text-center shadow-2xl">
@@ -157,7 +185,8 @@ const FormularioNewMoto: React.FC<Props> = ({ showForm, onClose }) => {
                         <button onClick={() => setShowSuccess(false)} className="px-4 py-2 rounded-md bg-[var(--accent)] text-[var(--bg)] font-bold">Cerrar</button>
                     </div>
                 </div>
-            )}
+            )
+        }
         </>
     );
 };
