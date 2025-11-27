@@ -1,219 +1,496 @@
 """
-Servicios de lógica de negocio para sensores.
-"""
-from datetime import datetime
-from typing import Optional
+Servicios de lógica de negocio para el módulo de sensores.
 
-from .models import Sensor, LecturaSensor, EstadoSensor
-from .validators import is_valor_fuera_rango, get_sensor_unit
-from ..shared.utils import clamp, safe_divide, percentage
+Contiene la lógica pura de dominio alineada con FLUJOS_SISTEMA.md:
+
+1. **Flujo #2 - Onboarding**: Provisión automática de sensores basada en templates
+    - prepare_sensor_from_template(): Crear sensor desde plantilla
+    - prepare_componente_from_template(): Crear componente desde plantilla
+    - group_templates_by_component(): Agrupar templates por tipo
+
+2. **Flujo #3 - Monitoreo en Tiempo Real**: Validación de calidad de lecturas
+    - validate_reading_quality(): Calcular quality_score basado en estado del sensor
+    - calculate_anomaly_score(): Detectar anomalías estadísticas
+
+3. **Flujo #4 - Detección de Fallas**: Evaluación de reglas y umbrales
+    - check_threshold_violation(): Verificar violaciones y calcular severidad
+    - calculate_component_state(): Agregar estado de componente (MAX algorithm)
+
+4. **Flujo #12 - Pipeline de Telemetría**: Transformaciones y cálculos
+    - Todas las funciones participan en el pipeline de procesamiento
+
+No depende directamente de FastAPI, solo de modelos y tipos.
+Incluye logging exhaustivo y manejo robusto de errores.
+
+Cambios v2.3:
+- componente_id y parametro_id son obligatorios en sensores
+- Ajustado a nuevas FKs (motos.id, componentes.id)
+- Algoritmo MAX para agregación de estados (FLUJO #13)
+"""
+import logging
+from typing import List, Dict, Any, Optional, Tuple
+from uuid import UUID
+from datetime import datetime, timezone
+
+from .models import SensorTemplate, Sensor, SensorState
+from ..motos.models import EstadoSalud
+
+logger = logging.getLogger(__name__)
 
 
 class SensorService:
-    """Servicio con lógica de negocio para sensores."""
-    
+    """Servicio de lógica de negocio para sensores."""
+
     @staticmethod
-    def prepare_sensor_data(
+    def prepare_sensor_from_template(
+        template: SensorTemplate,
         moto_id: int,
-        tipo: str,
-        codigo: str,
-        nombre: Optional[str] = None,
-        ubicacion: Optional[str] = None,
-        frecuencia_lectura: int = 5,
-        umbral_min: Optional[float] = None,
-        umbral_max: Optional[float] = None,
-        fabricante: Optional[str] = None,
-        modelo: Optional[str] = None,
-        version_firmware: Optional[str] = None,
-        notas: Optional[str] = None
-    ) -> dict:
+        componente_id: int,
+        parametro_id: int
+    ) -> Dict[str, Any]:
         """
-        Prepara los datos de un sensor para creación.
+        Preparar datos de sensor a partir de una plantilla.
         
         Args:
+            template: Plantilla de sensor
             moto_id: ID de la moto
-            tipo: Tipo de sensor
-            codigo: Código único
-            nombre: Nombre del sensor
-            ubicacion: Ubicación física
-            frecuencia_lectura: Frecuencia en segundos
-            umbral_min: Umbral mínimo
-            umbral_max: Umbral máximo
-            fabricante: Fabricante
-            modelo: Modelo
-            version_firmware: Versión del firmware
-            notas: Notas
+            componente_id: ID del componente (obligatorio en v2.3)
+            parametro_id: ID del parámetro (obligatorio en v2.3)
             
         Returns:
-            Diccionario con datos preparados
+            Diccionario con datos listos para crear sensor
         """
-        return {
-            "moto_id": moto_id,
-            "tipo": tipo,
-            "codigo": codigo,
-            "nombre": nombre,
-            "ubicacion": ubicacion,
-            "estado": EstadoSensor.ACTIVE,
-            "frecuencia_lectura": frecuencia_lectura,
-            "umbral_min": umbral_min,
-            "umbral_max": umbral_max,
-            "fabricante": fabricante,
-            "modelo": modelo,
-            "version_firmware": version_firmware,
-            "notas": notas
-        }
-    
+        try:
+            definition: Dict[str, Any] = template.definition
+            
+            sensor_data: Dict[str, Any] = {
+                "moto_id": moto_id,
+                "template_id": template.id,
+                "nombre": template.name,
+                "tipo": definition.get("sensor_type", "unknown"),
+                "componente_id": componente_id,
+                "parametro_id": parametro_id,
+                "config": {
+                    "thresholds": definition.get("default_thresholds", {}),
+                    "frequency_ms": definition.get("frequency_ms", 1000),
+                    "enabled": True
+                },
+                "sensor_state": SensorState.UNKNOWN
+            }
+            
+            logger.debug(
+                f"Sensor preparado desde template {template.id}: "
+                f"tipo={sensor_data['tipo']}, nombre={sensor_data['nombre']}"
+            )
+            
+            return sensor_data
+            
+        except Exception as e:
+            logger.error(f"Error preparando sensor desde template {template.id}: {e}")
+            raise ValueError(f"Error al preparar sensor: {str(e)}")
+
     @staticmethod
-    def prepare_lectura_data(
-        sensor_id: int,
+    def prepare_componente_from_template(
+        template: SensorTemplate,
+        moto_id: int
+    ) -> Dict[str, Any]:
+        """
+        Preparar datos de componente a partir de una plantilla.
+        
+        Args:
+            template: Plantilla de sensor
+            moto_id: ID de la moto
+            
+        Returns:
+            Diccionario con datos listos para crear componente
+        """
+        try:
+            definition: Dict[str, Any] = template.definition
+            component_type: str = definition.get("component_type", "unknown")
+            
+            componente_data: Dict[str, Any] = {
+                "moto_id": moto_id,
+                "tipo": component_type,
+                "nombre": f"Componente {component_type}",
+                # Estado inicial según EstadoSalud enum
+                "estado": EstadoSalud.BUENO,
+                "extra_data": {
+                    "sensor_count": 0,
+                    "created_from_template": str(template.id)
+                }
+            }
+            
+            logger.debug(
+                f"Componente preparado desde template {template.id}: "
+                f"tipo={component_type}"
+            )
+            
+            return componente_data
+            
+        except Exception as e:
+            logger.error(f"Error preparando componente desde template {template.id}: {e}")
+            raise ValueError(f"Error al preparar componente: {str(e)}")
+
+    @staticmethod
+    def calculate_component_state(
+        sensores: List[Sensor],
+        consider_offline_as_unknown: bool = True
+    ) -> Tuple[EstadoSalud, Dict[str, Any]]:
+        """
+        Calcular estado agregado de un componente basado en sus sensores.
+        
+        Algoritmo MVP:
+        1. Mapear sensor_state a score: ok=0, degraded=1, unknown=2, faulty=3, offline=4
+        2. Agregar con MAX (el peor estado determina el componente)
+        3. Mapear score a component_state: 0=ok, 1=warning, 2=moderate, 3+=critical
+        
+        Args:
+            sensores: Lista de sensores asociados al componente
+            consider_offline_as_unknown: Tratar offline como unknown (menos crítico)
+            
+        Returns:
+            Tupla (ComponentState, aggregation_data)
+        """
+        try:
+            if not sensores:
+                logger.warning("Sin sensores para calcular estado de componente")
+                # No hay sensores: devolver un estado por defecto (BUENO)
+                return EstadoSalud.BUENO, {
+                    "sensor_count": 0,
+                    "max_score": 0,
+                    "sensor_states": {},
+                    "algorithm": "max_score_v1"
+                }
+            
+            # Mapeo de estados a scores
+            state_scores = {
+                SensorState.OK: 0,
+                SensorState.DEGRADED: 1,
+                SensorState.UNKNOWN: 2,
+                SensorState.FAULTY: 3,
+                SensorState.OFFLINE: 4 if not consider_offline_as_unknown else 2
+            }
+            
+            # Calcular scores por sensor
+            sensor_scores: List[int] = []
+            state_counts: Dict[str, int] = {}
+            sensor_contributions: Dict[str, Dict[str, Any]] = {}
+            
+            for sensor in sensores:
+                score: int = state_scores.get(sensor.sensor_state, 2)
+                sensor_scores.append(score)
+                
+                # Contar estados
+                state_key: str = sensor.sensor_state.value
+                state_counts[state_key] = state_counts.get(state_key, 0) + 1
+                
+                # Guardar contribución de cada sensor
+                sensor_contributions[str(sensor.id)] = {
+                    "tipo": sensor.tipo,
+                    "state": sensor.sensor_state.value,
+                    "score": score
+                }
+            
+            # Agregar con MAX
+            max_score: int = max(sensor_scores)
+            
+            # Mapear a component_state
+            # Mapear scores a EstadoSalud (compatibilidad)
+            component_state: EstadoSalud
+            if max_score == 0:
+                component_state = EstadoSalud.EXCELENTE
+            elif max_score == 1:
+                component_state = EstadoSalud.BUENO
+            elif max_score == 2:
+                component_state = EstadoSalud.ATENCION
+            else:  # 3+
+                component_state = EstadoSalud.CRITICO
+            
+            aggregation_data: Dict[str, Any] = {
+                "sensor_count": len(sensores),
+                "max_score": max_score,
+                "sensor_states": state_counts,
+                "sensor_contributions": sensor_contributions,
+                "algorithm": "max_score_v1",
+                "calculated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            logger.info(
+                f"Estado de componente calculado: {component_state.value} "
+                f"(max_score={max_score}, {len(sensores)} sensores)"
+            )
+            
+            return component_state, aggregation_data
+            
+        except Exception as e:
+            logger.error(f"Error calculando estado de componente: {e}")
+            # Retornar BUENO en caso de error
+            return EstadoSalud.BUENO, {
+                "error": str(e),
+                "sensor_count": len(sensores) if sensores else 0
+            }
+
+    @staticmethod
+    def check_threshold_violation(
+        valor: float,
+        thresholds: Dict[str, Any],
         sensor_tipo: str,
-        valor: float,
-        timestamp_lectura: datetime,
-        umbral_min: Optional[float] = None,
-        umbral_max: Optional[float] = None,
-        metadata_json: Optional[str] = None
-    ) -> dict:
+        sensor_id: UUID
+    ) -> Optional[Dict[str, Any]]:
         """
-        Prepara los datos de una lectura para creación.
+        Verificar si un valor viola umbrales y generar alerta.
         
         Args:
-            sensor_id: ID del sensor
+            valor: Valor a verificar
+            thresholds: Diccionario con min y max
             sensor_tipo: Tipo de sensor
-            valor: Valor leído
-            timestamp_lectura: Timestamp de la lectura
-            umbral_min: Umbral mínimo del sensor
-            umbral_max: Umbral máximo del sensor
-            metadata_json: Metadata adicional
+            sensor_id: ID del sensor
             
         Returns:
-            Diccionario con datos preparados
+            Diccionario con alerta si hay violación, None si está en rango
         """
-        # Determinar unidad
-        unidad = get_sensor_unit(sensor_tipo)
-        
-        # Verificar si está fuera de rango
-        fuera_rango = is_valor_fuera_rango(sensor_tipo, valor)
-        
-        # Verificar si se debe generar alerta
-        alerta_generada = False
-        if umbral_min is not None and valor < umbral_min:
-            alerta_generada = True
-        if umbral_max is not None and valor > umbral_max:
-            alerta_generada = True
-        
-        return {
-            "sensor_id": sensor_id,
-            "valor": valor,
-            "unidad": unidad,
-            "timestamp_lectura": timestamp_lectura,
-            "fuera_rango": fuera_rango,
-            "alerta_generada": alerta_generada,
-            "metadata_json": metadata_json
-        }
-    
-    @staticmethod
-    def should_generate_alert(
-        valor: float,
-        umbral_min: Optional[float],
-        umbral_max: Optional[float]
-    ) -> tuple[bool, Optional[str]]:
-        """
-        Determina si se debe generar una alerta.
-        
-        Args:
-            valor: Valor leído
-            umbral_min: Umbral mínimo
-            umbral_max: Umbral máximo
+        try:
+            if not thresholds or "min" not in thresholds or "max" not in thresholds:
+                logger.debug(f"Sensor {sensor_id}: sin umbrales definidos")
+                return None
             
-        Returns:
-            (debe_alertar, tipo_umbral_violado)
-        """
-        if umbral_min is not None and valor < umbral_min:
-            return True, "min"
-        
-        if umbral_max is not None and valor > umbral_max:
-            return True, "max"
-        
-        return False, None
-    
-    @staticmethod
-    def get_alert_severity(
-        valor: float,
-        umbral_min: Optional[float],
-        umbral_max: Optional[float],
-        tipo_sensor: str
-    ) -> str:
-        """
-        Calcula la severidad de una alerta basada en el valor y umbrales.
-        
-        Args:
-            valor: Valor leído
-            umbral_min: Umbral mínimo
-            umbral_max: Umbral máximo
-            tipo_sensor: Tipo de sensor
+            min_val = thresholds["min"]
+            max_val = thresholds["max"]
             
-        Returns:
-            Nivel de severidad: "info", "warning", "critical"
-        """
-        if umbral_min is None and umbral_max is None:
-            return "info"
-        
-        # Calcular desviación porcentual usando safe_divide
-        if umbral_min is not None and valor < umbral_min:
-            # Desviación por debajo del mínimo
-            deviation_pct = safe_divide((umbral_min - valor) * 100, umbral_min, 0)
+            # Verificar violación
+            if min_val <= valor <= max_val:
+                logger.debug(f"Sensor {sensor_id}: valor {valor} dentro de rango [{min_val}, {max_val}]")
+                return None
             
-            if deviation_pct > 30:
-                return "critical"
-            elif deviation_pct > 15:
-                return "warning"
+            # Calcular severidad
+            range_size = max_val - min_val
+            
+            if valor < min_val:
+                deviation = ((min_val - valor) / range_size) * 100
+                violated = "min"
+            else:  # valor > max_val
+                deviation = ((valor - max_val) / range_size) * 100
+                violated = "max"
+            
+            # Mapear desviación a severidad
+            severidad: str
+            if deviation <= 10:
+                severidad = "low"
+            elif deviation <= 25:
+                severidad = "medium"
+            elif deviation <= 50:
+                severidad = "high"
             else:
-                return "info"
-        
-        if umbral_max is not None and valor > umbral_max:
-            # Desviación por encima del máximo
-            deviation_pct = safe_divide((valor - umbral_max) * 100, umbral_max, 0)
+                severidad = "critical"
             
-            if deviation_pct > 30:
-                return "critical"
-            elif deviation_pct > 15:
-                return "warning"
+            alert_data: Dict[str, Any] = {
+                "sensor_id": str(sensor_id),
+                "sensor_tipo": sensor_tipo,
+                "valor_actual": valor,
+                "umbral_violado": {
+                    "min": min_val,
+                    "max": max_val,
+                    "violated": violated
+                },
+                "deviation_percent": round(deviation, 2),
+                "severidad": severidad,
+                "mensaje": (
+                    f"Sensor {sensor_tipo}: valor {valor} fuera de rango "
+                    f"[{min_val}, {max_val}] ({violated} violado, desviación {deviation:.1f}%)"
+                )
+            }
+            
+            logger.warning(
+                f"Umbral violado - Sensor {sensor_id} ({sensor_tipo}): "
+                f"valor={valor}, rango=[{min_val}, {max_val}], severidad={severidad}"
+            )
+            
+            return alert_data
+            
+        except Exception as e:
+            logger.error(f"Error verificando umbrales para sensor {sensor_id}: {e}")
+            return None
+
+    @staticmethod
+    def group_templates_by_component(
+        templates: List[SensorTemplate]
+    ) -> Dict[str, List[SensorTemplate]]:
+        """
+        Agrupar templates por tipo de componente.
+        
+        Args:
+            templates: Lista de plantillas
+            
+        Returns:
+            Diccionario {component_type: [templates]}
+        """
+        try:
+            grouped: Dict[str, List[SensorTemplate]] = {}
+            
+            for template in templates:
+                component_type: str = template.definition.get("component_type", "unknown")
+                
+                if component_type not in grouped:
+                    grouped[component_type] = []
+                
+                grouped[component_type].append(template)
+            
+            logger.debug(
+                f"Templates agrupados: {len(grouped)} tipos de componentes, "
+                f"{len(templates)} templates totales"
+            )
+            
+            return grouped
+            
+        except Exception as e:
+            logger.error(f"Error agrupando templates: {e}")
+            return {}
+
+    @staticmethod
+    def validate_reading_quality(
+        valor: Dict[str, Any],
+        sensor_state: SensorState
+    ) -> Dict[str, Any]:
+        """
+        Validar calidad de una lectura y calcular métricas.
+        
+        Args:
+            valor: Valor JSONB de la lectura
+            sensor_state: Estado actual del sensor
+            
+        Returns:
+            Diccionario con quality_score y metadata
+        """
+        try:
+            quality_score: float = 1.0  # Perfecto por defecto
+            quality_factors: List[str] = []
+            
+            # Factor 1: Estado del sensor
+            sensor_factor: float
+            if sensor_state == SensorState.OK:
+                sensor_factor = 1.0
+            elif sensor_state == SensorState.DEGRADED:
+                sensor_factor = 0.8
+                quality_factors.append("sensor_degraded")
+            elif sensor_state == SensorState.FAULTY:
+                sensor_factor = 0.5
+                quality_factors.append("sensor_faulty")
+            elif sensor_state == SensorState.OFFLINE:
+                sensor_factor = 0.0
+                quality_factors.append("sensor_offline")
             else:
-                return "info"
-        
-        return "info"
-    
+                sensor_factor = 0.7
+                quality_factors.append("sensor_unknown")
+            
+            quality_score *= sensor_factor
+            
+            # Factor 2: Completitud de datos
+            if "value" not in valor or "unit" not in valor:
+                quality_score *= 0.7
+                quality_factors.append("incomplete_data")
+            
+            # Factor 3: Quality explícito en valor (si existe)
+            if "quality" in valor:
+                explicit_quality = valor["quality"]
+                if isinstance(explicit_quality, (int, float)) and 0 <= explicit_quality <= 1:
+                    quality_score *= explicit_quality
+                    quality_factors.append(f"explicit_quality_{explicit_quality}")
+            
+            result: Dict[str, Any] = {
+                "quality_score": round(quality_score, 3),
+                "quality_factors": quality_factors,
+                "is_reliable": quality_score >= 0.7,
+                "sensor_state": sensor_state.value
+            }
+            
+            if quality_score < 0.7:
+                logger.warning(
+                    f"Lectura de baja calidad: score={quality_score:.2f}, "
+                    f"factores={quality_factors}"
+                )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error validando calidad de lectura: {e}")
+            return {
+                "quality_score": 0.5,
+                "quality_factors": ["error"],
+                "is_reliable": False,
+                "error": str(e)
+            }
+
     @staticmethod
-    def can_modify_sensor(sensor: Sensor) -> tuple[bool, str]:
+    def calculate_anomaly_score(
+        current_value: float,
+        recent_values: List[float],
+        threshold_multiplier: float = 2.0
+    ) -> Dict[str, Any]:
         """
-        Verifica si un sensor puede ser modificado.
+        Calcular score de anomalía simple basado en desviación estándar.
+        
+        MVP: Detecta anomalías estadísticas simples.
+        Producción: Integrar con ML para detección más sofisticada.
         
         Args:
-            sensor: Sensor a verificar
+            current_value: Valor actual
+            recent_values: Valores históricos recientes
+            threshold_multiplier: Multiplicador de desviación estándar
             
         Returns:
-            (puede_modificar, mensaje_error)
+            Diccionario con anomaly_score e is_anomaly
         """
-        if sensor.deleted_at is not None:
-            return False, "El sensor está eliminado"
-        
-        if sensor.estado == EstadoSensor.MAINTENANCE:
-            return False, "El sensor está en mantenimiento, no puede ser modificado"
-        
-        return True, ""
-    
-    @staticmethod
-    def can_delete_sensor(sensor: Sensor) -> tuple[bool, str]:
-        """
-        Verifica si un sensor puede ser eliminado.
-        
-        Args:
-            sensor: Sensor a verificar
+        try:
+            if len(recent_values) < 3:
+                logger.debug("Insuficientes valores históricos para detectar anomalías")
+                return {
+                    "anomaly_score": 0.0,
+                    "is_anomaly": False,
+                    "reason": "insufficient_data"
+                }
             
-        Returns:
-            (puede_eliminar, mensaje_error)
-        """
-        if sensor.deleted_at is not None:
-            return False, "El sensor ya está eliminado"
-        
-        return True, ""
+            # Calcular media y desviación estándar
+            mean = sum(recent_values) / len(recent_values)
+            variance = sum((x - mean) ** 2 for x in recent_values) / len(recent_values)
+            std_dev = variance ** 0.5
+            
+            if std_dev == 0:
+                logger.debug("Desviación estándar cero, no hay anomalías")
+                return {
+                    "anomaly_score": 0.0,
+                    "is_anomaly": False,
+                    "reason": "zero_variance"
+                }
+            
+            # Calcular z-score
+            z_score = abs((current_value - mean) / std_dev)
+            
+            # Normalizar a 0-1
+            anomaly_score: float = min(z_score / (threshold_multiplier * 2), 1.0)
+            
+            is_anomaly: bool = z_score > threshold_multiplier
+            
+            result: Dict[str, Any] = {
+                "anomaly_score": round(anomaly_score, 3),
+                "is_anomaly": is_anomaly,
+                "z_score": round(z_score, 2),
+                "mean": round(mean, 2),
+                "std_dev": round(std_dev, 2),
+                "threshold": threshold_multiplier
+            }
+            
+            if is_anomaly:
+                logger.warning(
+                    f"Anomalía detectada: valor={current_value}, "
+                    f"z_score={z_score:.2f}, media={mean:.2f}, std={std_dev:.2f}"
+                )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error calculando anomaly score: {e}")
+            return {
+                "anomaly_score": 0.0,
+                "is_anomaly": False,
+                "error": str(e)
+            }

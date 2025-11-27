@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # ============================================
     OLLAMA_BASE_URL: str = "http://ollama:11434"  # Nombre del servicio en docker-compose
     OLLAMA_MODEL: str = "llama2"  # Modelos: llama2, llama3, mistral, phi, codellama, etc.
-    OLLAMA_TIMEOUT: int = 60
+    OLLAMA_TIMEOUT: int = 180
     OLLAMA_STREAM: bool = True
     
     # ============================================

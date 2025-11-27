@@ -1,418 +1,218 @@
-"""
-Casos de uso del dominio de motos.
-"""
-from typing import Optional, Tuple, List
-from fastapi import HTTPException, status
-
-from src.shared.base_models import PaginationParams
-from .repositories import MotoRepository
-from .services import MotoService
-from .models import Moto
+from typing import List, Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
+from decimal import Decimal
 from .schemas import (
-    RegisterMotoRequest,
-    UpdateMotoRequest,
-    UpdateKilometrajeRequest,
-    MotoFilterParams,
-    MotoResponse,
-    MotoStatsResponse
+    MotoCreateSchema, MotoReadSchema, MotoUpdateSchema,
+    EstadoActualSchema, DiagnosticoGeneralSchema, ModeloMotoSchema
 )
-from .events import (
-    emit_moto_registered,
-    emit_moto_updated,
-    emit_moto_deleted,
-    emit_kilometraje_updated
-)
+from .repositories import MotoRepository, EstadoActualRepository, ModeloMotoRepository
+from .services import MotoService
+from .validators import validate_kilometraje, validate_kilometraje_no_disminuye
+from src.shared.exceptions import NotFoundError, ValidationError, ForbiddenError
+
+# Constantes para evitar literales duplicados
+ERROR_MOTO_NOT_FOUND = "Moto no encontrada"
+ERROR_MOTO_FORBIDDEN = "No tienes acceso a esta moto"
+ERROR_MODELO_NOT_FOUND = "Modelo de moto no encontrado"
 
 
-class RegisterMotoUseCase:
-    """Caso de uso: Registrar una nueva moto."""
+class CreateMotoUseCase:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = MotoRepository(db)
+        self.modelo_repo = ModeloMotoRepository(db)
+        self.service = MotoService()
     
-    def __init__(self, repository: MotoRepository, service: MotoService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        request: RegisterMotoRequest,
-        usuario_id: int
-    ) -> MotoResponse:
-        """
-        Registra una nueva moto.
+    async def execute(self, data: MotoCreateSchema, usuario_id: int) -> MotoReadSchema:
+        # Validaciones de negocio adicionales (Pydantic ya validó formato)
+        try:
+            if data.kilometraje_actual:
+                validate_kilometraje(Decimal(str(data.kilometraje_actual)))
+        except ValueError as e:
+            raise ValidationError(str(e))
         
-        Args:
-            request: Datos de la moto
-            usuario_id: ID del usuario propietario
-            
-        Returns:
-            Moto registrada
-            
-        Raises:
-            HTTPException: Si VIN o placa ya existen
-        """
-        # Verificar VIN único
-        if await self.repository.vin_exists(request.vin):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"El VIN {request.vin} ya está registrado"
-            )
+        # Validar unicidad de VIN
+        existing = await self.repo.get_by_vin(data.vin)
+        if existing:
+            raise ValidationError("Ya existe una moto con ese VIN")
         
-        # Verificar placa única (si se proporciona)
-        if request.placa and await self.repository.placa_exists(request.placa):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"La placa {request.placa} ya está registrada"
-            )
+        # Validar que el modelo existe
+        modelo = await self.modelo_repo.get_by_id(data.modelo_moto_id)
+        if not modelo:
+            raise NotFoundError(ERROR_MODELO_NOT_FOUND)
         
-        # Preparar datos
-        moto_data = self.service.prepare_moto_data(
-            request.model_dump(exclude_unset=True),
-            usuario_id
-        )
+        moto_data = self.service.prepare_moto_data(data.model_dump(), usuario_id)
+        moto = await self.repo.create(moto_data)
         
-        # Crear moto
-        moto = await self.repository.create(moto_data)
-        
-        # Emitir evento
-        await emit_moto_registered(
+        # Provisionar estados iniciales para todos los componentes del modelo
+        await self.service.provision_estados_iniciales(
+            db=self.db,
             moto_id=moto.id,
-            usuario_id=usuario_id,
-            vin=moto.vin,
-            modelo=moto.modelo,
-            año=moto.año,
-            placa=moto.placa
+            modelo_moto_id=moto.modelo_moto_id
         )
         
-        # Retornar respuesta
-        moto_dict = self.service.build_moto_response(moto)
-        return MotoResponse(**moto_dict)
+        # Nota: La provisión de sensores se hace desde el módulo 'sensores'
+        # usando SensorTemplates cuando se llama al endpoint de provisión
+        
+        return MotoReadSchema.model_validate(moto)
 
 
 class GetMotoUseCase:
-    """Caso de uso: Obtener una moto por ID."""
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = MotoRepository(db)
+        self.service = MotoService()
     
-    def __init__(self, repository: MotoRepository, service: MotoService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        moto_id: int,
-        usuario_id: int,
-        is_admin: bool = False
-    ) -> MotoResponse:
-        """
-        Obtiene una moto por ID.
-        
-        Args:
-            moto_id: ID de la moto
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Moto encontrada
-            
-        Raises:
-            HTTPException: Si no se encuentra o no tiene permiso
-        """
-        moto = await self.repository.get_by_id(moto_id, load_usuario=True)
-        
+    async def execute(self, moto_id: int, usuario_id: int) -> MotoReadSchema:
+        moto = await self.repo.get_by_id(moto_id)
         if not moto:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Moto no encontrada"
-            )
-        
-        # Verificar ownership (admins pueden ver todas)
-        if not is_admin and not self.service.verify_ownership(moto, usuario_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permiso para ver esta moto"
-            )
-        
-        moto_dict = self.service.build_moto_response(moto)
-        return MotoResponse(**moto_dict)
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
+        if not self.service.verify_ownership(moto, usuario_id):
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
+        return MotoReadSchema.model_validate(moto)
 
 
 class ListMotosUseCase:
-    """Caso de uso: Listar motos con filtros."""
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = MotoRepository(db)
     
-    def __init__(self, repository: MotoRepository, service: MotoService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        filters: MotoFilterParams,
-        pagination: PaginationParams,
-        usuario_id: int,
-        is_admin: bool = False
-    ) -> Tuple[List[Moto], int]:
-        """
-        Lista motos con filtros y paginación.
-        
-        Args:
-            filters: Filtros de búsqueda
-            pagination: Parámetros de paginación
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Tupla con (lista de motos, total)
-        """
-        # Si no es admin, solo puede ver sus motos
-        effective_usuario_id = filters.usuario_id if is_admin else usuario_id
-        
-        # Obtener motos
-        motos = await self.repository.list_motos(
-            usuario_id=effective_usuario_id,
-            modelo=filters.modelo,
-            año_desde=filters.año_desde,
-            año_hasta=filters.año_hasta,
-            vin=filters.vin,
-            placa=filters.placa,
-            skip=pagination.offset,
-            limit=pagination.limit,
-            order_by=filters.order_by,
-            order_direction=filters.order_direction,
-            load_usuario=is_admin  # Solo cargar usuario si es admin
-        )
-        
-        # Contar total
-        total = await self.repository.count_motos(
-            usuario_id=effective_usuario_id,
-            modelo=filters.modelo,
-            año_desde=filters.año_desde,
-            año_hasta=filters.año_hasta,
-            vin=filters.vin,
-            placa=filters.placa
-        )
-        
-        return motos, total
+    async def execute(self, usuario_id: int, skip: int = 0, limit: int = 100) -> List[MotoReadSchema]:
+        motos = await self.repo.list(usuario_id=usuario_id, skip=skip, limit=limit)
+        return [MotoReadSchema.model_validate(m) for m in motos]
 
 
 class UpdateMotoUseCase:
-    """Caso de uso: Actualizar una moto."""
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = MotoRepository(db)
+        self.service = MotoService()
     
-    def __init__(self, repository: MotoRepository, service: MotoService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        moto_id: int,
-        request: UpdateMotoRequest,
-        usuario_id: int,
-        is_admin: bool = False
-    ) -> MotoResponse:
-        """
-        Actualiza una moto.
-        
-        Args:
-            moto_id: ID de la moto
-            request: Datos a actualizar
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Moto actualizada
-            
-        Raises:
-            HTTPException: Si no se encuentra o no tiene permiso
-        """
-        moto = await self.repository.get_by_id(moto_id)
-        
+    async def execute(self, moto_id: int, data: MotoUpdateSchema, usuario_id: int) -> MotoReadSchema:
+        moto = await self.repo.get_by_id(moto_id)
         if not moto:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Moto no encontrada"
-            )
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
+        if not self.service.verify_ownership(moto, usuario_id):
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         
-        # Verificar ownership (admins pueden editar todas)
-        if not is_admin and not self.service.verify_ownership(moto, usuario_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permiso para editar esta moto"
-            )
+        update_data: Dict[str, Any] = data.model_dump(exclude_unset=True)
         
-        # Obtener datos a actualizar
-        update_data = request.model_dump(exclude_unset=True)
+        # Validaciones de lógica de negocio (Pydantic ya validó formato)
+        try:
+            if "kilometraje_actual" in update_data:
+                nuevo_km = Decimal(str(update_data["kilometraje_actual"]))
+                validate_kilometraje(nuevo_km)
+                # Regla de negocio: el kilometraje nunca puede disminuir
+                validate_kilometraje_no_disminuye(nuevo_km, moto.kilometraje_actual)
+                # Verificar si se debe emitir evento de servicio vencido
+                await self.service.check_servicio_vencido(moto, moto.kilometraje_actual)
+        except ValueError as e:
+            raise ValidationError(str(e))
         
-        # Verificar placa única (si se está actualizando)
-        if "placa" in update_data and update_data["placa"]:
-            if await self.repository.placa_exists(update_data["placa"], exclude_id=moto_id):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"La placa {update_data['placa']} ya está registrada"
-                )
-            update_data["placa"] = update_data["placa"].upper()
+        if "placa" in update_data or "color" in update_data:
+            prepared_data = self.service.prepare_moto_data(update_data, usuario_id)
+        else:
+            prepared_data = update_data
         
-        # Validar kilometraje si se está actualizando
-        if "kilometraje" in update_data:
-            is_valid, error_msg = self.service.validate_kilometraje_update(
-                moto.kilometraje,
-                update_data["kilometraje"]
-            )
-            if not is_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=error_msg
-                )
-        
-        # Actualizar
-        updated_moto = await self.repository.update(moto, update_data)
-        
-        # Emitir evento
-        await emit_moto_updated(
-            moto_id=moto_id,
-            usuario_id=moto.usuario_id,
-            updated_fields=list(update_data.keys()),
-            updated_by=usuario_id
-        )
-        
-        moto_dict = self.service.build_moto_response(updated_moto)
-        return MotoResponse(**moto_dict)
+        updated_moto = await self.repo.update(moto_id, prepared_data)
+        return MotoReadSchema.model_validate(updated_moto)
 
 
 class DeleteMotoUseCase:
-    """Caso de uso: Eliminar una moto."""
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = MotoRepository(db)
+        self.service = MotoService()
     
-    def __init__(self, repository: MotoRepository, service: MotoService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        moto_id: int,
-        usuario_id: int,
-        is_admin: bool = False
-    ) -> None:
-        """
-        Elimina una moto (soft delete).
-        
-        Args:
-            moto_id: ID de la moto
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Raises:
-            HTTPException: Si no se encuentra o no tiene permiso
-        """
-        moto = await self.repository.get_by_id(moto_id)
-        
+    async def execute(self, moto_id: int, usuario_id: int) -> None:
+        moto = await self.repo.get_by_id(moto_id)
         if not moto:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Moto no encontrada"
-            )
-        
-        # Verificar ownership (admins pueden eliminar todas)
-        if not is_admin and not self.service.verify_ownership(moto, usuario_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permiso para eliminar esta moto"
-            )
-        
-        # Eliminar (soft delete)
-        await self.repository.delete(moto, soft=True)
-        
-        # Emitir evento
-        await emit_moto_deleted(
-            moto_id=moto_id,
-            usuario_id=moto.usuario_id,
-            vin=moto.vin,
-            deleted_by=usuario_id
-        )
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
+        if not self.service.verify_ownership(moto, usuario_id):
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
+        await self.repo.delete(moto_id)
 
 
-class UpdateKilometrajeUseCase:
-    """Caso de uso: Actualizar solo el kilometraje."""
+class GetEstadoActualUseCase:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.moto_repo = MotoRepository(db)
+        self.estado_repo = EstadoActualRepository(db)
+        self.service = MotoService()
     
-    def __init__(self, repository: MotoRepository, service: MotoService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        moto_id: int,
-        request: UpdateKilometrajeRequest,
-        usuario_id: int,
-        is_admin: bool = False
-    ) -> MotoResponse:
-        """
-        Actualiza el kilometraje de una moto.
-        
-        Args:
-            moto_id: ID de la moto
-            request: Nuevo kilometraje
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Moto actualizada
-            
-        Raises:
-            HTTPException: Si no se encuentra o no tiene permiso
-        """
-        moto = await self.repository.get_by_id(moto_id)
-        
+    async def execute(self, moto_id: int, usuario_id: int) -> List[EstadoActualSchema]:
+        moto = await self.moto_repo.get_by_id(moto_id)
         if not moto:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Moto no encontrada"
-            )
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
+        if not self.service.verify_ownership(moto, usuario_id):
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         
-        # Verificar ownership (admins pueden editar todas)
-        if not is_admin and not self.service.verify_ownership(moto, usuario_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permiso para actualizar esta moto"
-            )
+        estados = await self.estado_repo.get_by_moto(moto_id)
+        return [EstadoActualSchema.model_validate(e) for e in estados]
+
+
+class GetDiagnosticoGeneralUseCase:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.moto_repo = MotoRepository(db)
+        self.estado_repo = EstadoActualRepository(db)
+        self.service = MotoService()
+    
+    async def execute(self, moto_id: int, usuario_id: int) -> DiagnosticoGeneralSchema:
+        moto = await self.moto_repo.get_by_id(moto_id)
+        if not moto:
+            raise NotFoundError(ERROR_MOTO_NOT_FOUND)
+        if not self.service.verify_ownership(moto, usuario_id):
+            raise ForbiddenError(ERROR_MOTO_FORBIDDEN)
         
-        # Validar kilometraje
-        is_valid, error_msg = self.service.validate_kilometraje_update(
-            moto.kilometraje,
-            request.kilometraje
+        estados = await self.estado_repo.get_by_moto(moto_id)
+        estado_general = self.service.calcular_estado_general(list(estados))
+        
+        # Convertir estados a schemas con información del componente
+        estados_schemas = [
+            EstadoActualSchema(
+                id=e.id,  # PK actualizado: estado_actual_id → id
+                moto_id=e.moto_id,
+                componente_id=e.componente_id,
+                componente_nombre=e.componente.nombre if e.componente else "Desconocido",
+                ultimo_valor=e.ultimo_valor,  # Campo actualizado: valor_actual → ultimo_valor
+                estado=e.estado,
+                ultima_actualizacion=e.ultima_actualizacion
+            )
+            for e in estados
+        ]
+        
+        # Obtener última actualización más reciente
+        ultima_actualizacion = max(
+            (e.ultima_actualizacion for e in estados),
+            default=moto.updated_at
         )
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
         
-        # Guardar kilometraje anterior
-        old_kilometraje = moto.kilometraje
-        
-        # Actualizar
-        updated_moto = await self.repository.update(
-            moto,
-            {"kilometraje": request.kilometraje}
-        )
-        
-        # Emitir evento específico
-        await emit_kilometraje_updated(
+        return DiagnosticoGeneralSchema(
             moto_id=moto_id,
-            usuario_id=moto.usuario_id,
-            old_kilometraje=old_kilometraje,
-            new_kilometraje=request.kilometraje,
-            updated_by=usuario_id
+            estado_general=estado_general,
+            componentes=estados_schemas,
+            ultima_actualizacion=ultima_actualizacion
         )
-        
-        moto_dict = self.service.build_moto_response(updated_moto)
-        return MotoResponse(**moto_dict)
 
 
-class GetMotoStatsUseCase:
-    """Caso de uso: Obtener estadísticas de motos."""
+class ListModelosDisponiblesUseCase:
+    """
+    Lista los modelos de motos disponibles para registro.
     
-    def __init__(self, repository: MotoRepository):
-        self.repository = repository
+    Usado en el flujo de onboarding cuando el usuario va a registrar su primera moto.
+    Retorna solo los modelos activos (activo=true).
+    """
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repo = ModeloMotoRepository(db)
     
-    async def execute(self) -> MotoStatsResponse:
+    async def execute(self) -> List[ModeloMotoSchema]:
         """
-        Obtiene estadísticas de motos.
+        Ejecuta el caso de uso.
         
         Returns:
-            Estadísticas de motos
+            List[ModeloMotoSchema]: Lista de modelos activos disponibles
         """
-        stats = await self.repository.get_stats()
-        return MotoStatsResponse(**stats)
+        modelos = await self.repo.list_activos()
+        return [ModeloMotoSchema.model_validate(m) for m in modelos]

@@ -1,383 +1,318 @@
 """
-Repositorio para gestión de motos en la base de datos.
+Repositorios para el módulo de motos.
+
+Define las clases de acceso a datos (Data Access Layer) usando SQLAlchemy.
+Cada repositorio maneja operaciones CRUD para una entidad específica.
+
+Versión: v2.3 MVP
 """
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Dict, Any, List
 from datetime import datetime
-from sqlalchemy import select, func, desc, asc, or_
+from decimal import Decimal
+from sqlalchemy import select, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
-from .models import Moto
-from ..auth.models import Usuario
+from .models import ModeloMoto, Moto, Componente, ReglaEstado, EstadoActual, EstadoSalud
 
 
-class MotoRepository:
-    """Repositorio para operaciones CRUD de motos."""
+# ============================================
+# REPOSITORIOS PRINCIPALES
+# ============================================
+
+class ModeloMotoRepository:
+    """
+    Repositorio para gestión de modelos de motos (catálogo).
+    
+    Gestiona la tabla 'modelos_moto' que contiene el catálogo de modelos
+    soportados (KTM 390 Duke 2024, etc.).
+    """
     
     def __init__(self, session: AsyncSession):
         self.session = session
     
-    async def create(self, moto_data: dict) -> Moto:
+    async def get_by_id(self, modelo_id: int) -> Optional[ModeloMoto]:
+        """
+        Obtiene un modelo de moto por su ID.
+        
+        Usado en: CreateMotoUseCase (validar modelo existe)
+        """
+        result = await self.session.execute(
+            select(ModeloMoto).where(ModeloMoto.id == modelo_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def list_activos(self) -> Sequence[ModeloMoto]:
+        """
+        Lista todos los modelos activos disponibles para registro.
+        
+        Usado en: ListModelosDisponiblesUseCase (onboarding)
+        """
+        result = await self.session.execute(
+            select(ModeloMoto)
+            .where(ModeloMoto.activo == True)
+            .order_by(ModeloMoto.marca, ModeloMoto.nombre)
+        )
+        return result.scalars().all()
+
+
+class MotoRepository:
+    """
+    Repositorio para gestión de motos (instancias individuales).
+    
+    Gestiona la tabla 'motos' con operaciones CRUD completas.
+    """
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def create(self, moto_data: Dict[str, Any]) -> Moto:
         """
         Crea una nueva moto.
         
-        Args:
-            moto_data: Diccionario con datos de la moto
-            
-        Returns:
-            Moto creada
+        Usado en: CreateMotoUseCase
         """
         moto = Moto(**moto_data)
         self.session.add(moto)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(moto)
         return moto
     
-    async def get_by_id(
-        self,
-        moto_id: int,
-        include_deleted: bool = False,
-        load_usuario: bool = True
-    ) -> Optional[Moto]:
+    async def get_by_id(self, moto_id: int, load_relations: bool = False) -> Optional[Moto]:
         """
-        Obtiene una moto por ID.
+        Obtiene una moto por su ID (PK actualizado: moto_id → id).
         
         Args:
             moto_id: ID de la moto
-            include_deleted: Si incluir motos eliminadas
-            load_usuario: Si cargar la relación con usuario
+            load_relations: Si True, carga usuario y estados_actuales
             
-        Returns:
-            Moto o None si no existe
+        Usado en: Get, Update, Delete, GetEstadoActual, GetDiagnostico UseCase
         """
         query = select(Moto).where(Moto.id == moto_id)
         
-        if not include_deleted:
-            query = query.where(Moto.deleted_at.is_(None))
-        
-        if load_usuario:
-            query = query.options(selectinload(Moto.usuario))
-        
-        result = await self.session.execute(query)
-        return result.scalar_one_or_none()
-    
-    async def get_by_vin(self, vin: str, include_deleted: bool = False) -> Optional[Moto]:
-        """
-        Obtiene una moto por VIN.
-        
-        Args:
-            vin: VIN de la moto
-            include_deleted: Si incluir motos eliminadas
-            
-        Returns:
-            Moto o None si no existe
-        """
-        query = select(Moto).where(Moto.vin == vin.upper())
-        
-        if not include_deleted:
-            query = query.where(Moto.deleted_at.is_(None))
+        if load_relations:
+            query = query.options(
+                selectinload(Moto.usuario),
+                selectinload(Moto.estados_actuales).selectinload(EstadoActual.componente)
+            )
         
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
     
-    async def get_by_placa(self, placa: str, include_deleted: bool = False) -> Optional[Moto]:
+    async def get_by_vin(self, vin: str) -> Optional[Moto]:
         """
-        Obtiene una moto por placa.
+        Obtiene una moto por su VIN (Vehicle Identification Number).
         
-        Args:
-            placa: Placa de la moto
-            include_deleted: Si incluir motos eliminadas
-            
-        Returns:
-            Moto o None si no existe
+        Usado en: CreateMotoUseCase (validar unicidad VIN)
         """
-        query = select(Moto).where(Moto.placa == placa.upper())
-        
-        if not include_deleted:
-            query = query.where(Moto.deleted_at.is_(None))
-        
-        result = await self.session.execute(query)
+        result = await self.session.execute(
+            select(Moto).where(Moto.vin == vin)
+        )
         return result.scalar_one_or_none()
     
-    async def list_motos(
+    async def list(
         self,
         usuario_id: Optional[int] = None,
-        modelo: Optional[str] = None,
-        año_desde: Optional[int] = None,
-        año_hasta: Optional[int] = None,
-        vin: Optional[str] = None,
-        placa: Optional[str] = None,
         skip: int = 0,
-        limit: int = 20,
-        order_by: str = "created_at",
-        order_direction: str = "desc",
-        include_deleted: bool = False,
-        load_usuario: bool = True
+        limit: int = 100
     ) -> Sequence[Moto]:
         """
-        Lista motos con filtros y paginación.
+        Lista motos con paginación opcional.
         
         Args:
-            usuario_id: Filtrar por usuario
-            modelo: Filtrar por modelo (búsqueda parcial)
-            año_desde: Año de fabricación desde
-            año_hasta: Año de fabricación hasta
-            vin: Buscar por VIN
-            placa: Buscar por placa
-            skip: Registros a saltar
-            limit: Registros a retornar
-            order_by: Campo para ordenar
-            order_direction: Dirección del ordenamiento
-            include_deleted: Si incluir motos eliminadas
-            load_usuario: Si cargar la relación con usuario
+            usuario_id: Filtrar por dueño (None = todas)
+            skip: Offset para paginación
+            limit: Cantidad máxima de resultados
             
-        Returns:
-            Lista de motos
+        Usado en: ListMotosUseCase
         """
         query = select(Moto)
         
-        # Filtros
-        if not include_deleted:
-            query = query.where(Moto.deleted_at.is_(None))
-        
-        if usuario_id is not None:
+        if usuario_id:
             query = query.where(Moto.usuario_id == usuario_id)
         
-        if modelo:
-            query = query.where(Moto.modelo.ilike(f"%{modelo}%"))
-        
-        if año_desde is not None:
-            query = query.where(Moto.año >= año_desde)
-        
-        if año_hasta is not None:
-            query = query.where(Moto.año <= año_hasta)
-        
-        if vin:
-            query = query.where(Moto.vin == vin.upper())
-        
-        if placa:
-            query = query.where(Moto.placa == placa.upper())
-        
-        # Ordenamiento
-        order_column = getattr(Moto, order_by, Moto.created_at)
-        if order_direction == "desc":
-            query = query.order_by(desc(order_column))
-        else:
-            query = query.order_by(asc(order_column))
-        
-        # Relaciones
-        if load_usuario:
-            query = query.options(selectinload(Moto.usuario))
-        
-        # Paginación
-        query = query.offset(skip).limit(limit)
+        query = query.order_by(desc(Moto.created_at)).offset(skip).limit(limit)
         
         result = await self.session.execute(query)
         return result.scalars().all()
     
-    async def count_motos(
-        self,
-        usuario_id: Optional[int] = None,
-        modelo: Optional[str] = None,
-        año_desde: Optional[int] = None,
-        año_hasta: Optional[int] = None,
-        vin: Optional[str] = None,
-        placa: Optional[str] = None,
-        include_deleted: bool = False
-    ) -> int:
+    async def update(self, moto_id: int, update_data: Dict[str, Any]) -> Moto:
         """
-        Cuenta motos que coinciden con los filtros.
+        Actualiza una moto existente.
         
-        Args:
-            usuario_id: Filtrar por usuario
-            modelo: Filtrar por modelo
-            año_desde: Año de fabricación desde
-            año_hasta: Año de fabricación hasta
-            vin: Buscar por VIN
-            placa: Buscar por placa
-            include_deleted: Si incluir motos eliminadas
-            
-        Returns:
-            Número de motos
+        Usado en: UpdateMotoUseCase
         """
-        query = select(func.count(Moto.id))
+        moto = await self.get_by_id(moto_id)
+        if not moto:
+            raise ValueError("Moto not found")
         
-        # Filtros
-        if not include_deleted:
-            query = query.where(Moto.deleted_at.is_(None))
-        
-        if usuario_id is not None:
-            query = query.where(Moto.usuario_id == usuario_id)
-        
-        if modelo:
-            query = query.where(Moto.modelo.ilike(f"%{modelo}%"))
-        
-        if año_desde is not None:
-            query = query.where(Moto.año >= año_desde)
-        
-        if año_hasta is not None:
-            query = query.where(Moto.año <= año_hasta)
-        
-        if vin:
-            query = query.where(Moto.vin == vin.upper())
-        
-        if placa:
-            query = query.where(Moto.placa == placa.upper())
-        
-        result = await self.session.execute(query)
-        return result.scalar_one()
-    
-    async def update(self, moto: Moto, update_data: dict) -> Moto:
-        """
-        Actualiza una moto.
-        
-        Args:
-            moto: Moto a actualizar
-            update_data: Datos a actualizar
-            
-        Returns:
-            Moto actualizada
-        """
         for key, value in update_data.items():
-            if hasattr(moto, key):
+            if value is not None:
                 setattr(moto, key, value)
         
-        moto.updated_at = datetime.utcnow()
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(moto)
         return moto
     
-    async def delete(self, moto: Moto, soft: bool = True) -> None:
+    async def delete(self, moto_id: int) -> None:
         """
-        Elimina una moto (soft delete por defecto).
+        Elimina una moto (soft delete recomendado en producción).
         
-        Args:
-            moto: Moto a eliminar
-            soft: Si hacer soft delete o hard delete
+        Usado en: DeleteMotoUseCase
         """
-        if soft:
-            moto.deleted_at = datetime.utcnow()
-            await self.session.commit()
-        else:
+        moto = await self.get_by_id(moto_id)
+        if moto:
             await self.session.delete(moto)
-            await self.session.commit()
+            await self.session.flush()
+
+
+class EstadoActualRepository:
+    """
+    Repositorio para gestión de estados actuales de componentes.
     
-    async def vin_exists(self, vin: str, exclude_id: Optional[int] = None) -> bool:
+    Gestiona la tabla 'estado_actual' que mantiene el estado en tiempo real
+    de cada componente de cada moto.
+    """
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def get_by_moto(self, moto_id: int) -> Sequence[EstadoActual]:
         """
-        Verifica si un VIN ya existe.
+        Obtiene todos los estados actuales de una moto (11 componentes).
         
-        Args:
-            vin: VIN a verificar
-            exclude_id: ID de moto a excluir (para updates)
-            
-        Returns:
-            True si existe, False si no
+        Usado en: GetEstadoActualUseCase, GetDiagnosticoGeneralUseCase
         """
-        query = select(func.count(Moto.id)).where(
-            Moto.vin == vin.upper(),
-            Moto.deleted_at.is_(None)
+        result = await self.session.execute(
+            select(EstadoActual)
+            .options(selectinload(EstadoActual.componente))
+            .where(EstadoActual.moto_id == moto_id)
         )
-        
-        if exclude_id is not None:
-            query = query.where(Moto.id != exclude_id)
-        
-        result = await self.session.execute(query)
-        count = result.scalar_one()
-        return count > 0
-    
-    async def placa_exists(self, placa: str, exclude_id: Optional[int] = None) -> bool:
-        """
-        Verifica si una placa ya existe.
-        
-        Args:
-            placa: Placa a verificar
-            exclude_id: ID de moto a excluir (para updates)
-            
-        Returns:
-            True si existe, False si no
-        """
-        query = select(func.count(Moto.id)).where(
-            Moto.placa == placa.upper(),
-            Moto.deleted_at.is_(None)
-        )
-        
-        if exclude_id is not None:
-            query = query.where(Moto.id != exclude_id)
-        
-        result = await self.session.execute(query)
-        count = result.scalar_one()
-        return count > 0
-    
-    async def get_motos_by_usuario(
-        self,
-        usuario_id: int,
-        include_deleted: bool = False
-    ) -> Sequence[Moto]:
-        """
-        Obtiene todas las motos de un usuario.
-        
-        Args:
-            usuario_id: ID del usuario
-            include_deleted: Si incluir motos eliminadas
-            
-        Returns:
-            Lista de motos del usuario
-        """
-        query = select(Moto).where(Moto.usuario_id == usuario_id)
-        
-        if not include_deleted:
-            query = query.where(Moto.deleted_at.is_(None))
-        
-        query = query.order_by(desc(Moto.created_at))
-        
-        result = await self.session.execute(query)
         return result.scalars().all()
     
-    async def get_stats(self) -> dict:
+    async def get_by_componente(
+        self,
+        moto_id: int,
+        componente_id: int
+    ) -> Optional[EstadoActual]:
         """
-        Obtiene estadísticas de motos.
+        Obtiene el estado actual de un componente específico de una moto.
         
-        Returns:
-            Diccionario con estadísticas
+        Usado en: procesar_lectura_y_actualizar_estado (services.py)
         """
-        # Total de motos
-        total_query = select(func.count(Moto.id)).where(Moto.deleted_at.is_(None))
-        total_result = await self.session.execute(total_query)
-        total_motos = total_result.scalar_one()
+        result = await self.session.execute(
+            select(EstadoActual).where(
+                and_(
+                    EstadoActual.moto_id == moto_id,
+                    EstadoActual.componente_id == componente_id
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+    
+    async def upsert_estado_actual(
+        self,
+        moto_id: int,
+        componente_id: int,
+        ultimo_valor: Decimal,
+        estado: EstadoSalud
+    ) -> EstadoActual:
+        """
+        Crea o actualiza el estado actual de un componente (UPSERT).
         
-        # Motos por año
-        año_query = select(
-            Moto.año,
-            func.count(Moto.id).label("count")
-        ).where(
-            Moto.deleted_at.is_(None)
-        ).group_by(Moto.año).order_by(desc("count"))
+        Usado en: procesar_lectura_y_actualizar_estado (services.py)
+        """
+        existing = await self.get_by_componente(moto_id, componente_id)
         
-        año_result = await self.session.execute(año_query)
-        motos_por_año = {row.año: row.count for row in año_result}
+        if existing:
+            existing.ultimo_valor = ultimo_valor
+            existing.estado = estado
+            existing.ultima_actualizacion = datetime.now()
+            await self.session.flush()
+            await self.session.refresh(existing)
+            return existing
+        else:
+            new_estado = EstadoActual(
+                moto_id=moto_id,
+                componente_id=componente_id,
+                ultimo_valor=ultimo_valor,
+                estado=estado,
+                ultima_actualizacion=datetime.now()
+            )
+            self.session.add(new_estado)
+            await self.session.flush()
+            await self.session.refresh(new_estado)
+            return new_estado
+    
+    async def create_bulk(self, estados: List[Dict[str, Any]]) -> None:
+        """
+        Crea múltiples estados actuales en lote (provisión inicial).
         
-        # Kilometraje promedio
-        km_query = select(func.avg(Moto.kilometraje)).where(Moto.deleted_at.is_(None))
-        km_result = await self.session.execute(km_query)
-        kilometraje_promedio = km_result.scalar_one() or 0.0
+        Usado en: provision_estados_iniciales (services.py)
+        Crea 11 registros al registrar una moto nueva.
+        """
+        for estado_data in estados:
+            estado = EstadoActual(**estado_data)
+            self.session.add(estado)
+        await self.session.flush()
+
+
+class ComponenteRepository:
+    """
+    Repositorio para gestión de componentes (partes de la moto).
+    
+    Gestiona la tabla 'componentes' que define las partes monitoreadas
+    de cada modelo (Motor, Frenos, Neumáticos, etc.).
+    """
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def list_by_modelo(self, modelo_moto_id: int) -> Sequence[Componente]:
+        """
+        Lista todos los componentes de un modelo específico (11 para KTM 390 Duke).
         
-        # Modelos populares
-        modelo_query = select(
-            Moto.modelo,
-            func.count(Moto.id).label("count")
-        ).where(
-            Moto.deleted_at.is_(None)
-        ).group_by(Moto.modelo).order_by(desc("count")).limit(10)
+        Usado en: provision_estados_iniciales (services.py)
+        """
+        result = await self.session.execute(
+            select(Componente)
+            .where(Componente.modelo_moto_id == modelo_moto_id)
+            .order_by(Componente.nombre)
+        )
+        return result.scalars().all()
+
+
+class ReglaEstadoRepository:
+    """
+    Repositorio para gestión de reglas de evaluación de estado.
+    
+    Gestiona la tabla 'reglas_estado' que define los umbrales para evaluar
+    si un componente está en estado BUENO, ATENCION o CRITICO.
+    """
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def get_by_componente_parametro(
+        self,
+        componente_id: int,
+        parametro_id: int
+    ) -> Optional[ReglaEstado]:
+        """
+        Obtiene una regla específica por componente y parámetro.
         
-        modelo_result = await self.session.execute(modelo_query)
-        modelos_populares = [
-            {"modelo": row.modelo, "count": row.count}
-            for row in modelo_result
-        ]
+        Ejemplo: Regla de temperatura para Motor
+        - limite_critico: >= 115°C
+        - limite_atencion: >= 105°C
+        - limite_bueno: >= 90°C
         
-        return {
-            "total_motos": total_motos,
-            "motos_por_año": motos_por_año,
-            "kilometraje_promedio": float(kilometraje_promedio),
-            "modelos_populares": modelos_populares
-        }
+        Usado en: procesar_lectura_y_actualizar_estado (services.py)
+        """
+        result = await self.session.execute(
+            select(ReglaEstado).where(
+                and_(
+                    ReglaEstado.componente_id == componente_id,
+                    ReglaEstado.parametro_id == parametro_id
+                )
+            )
+        )
+        return result.scalar_one_or_none()

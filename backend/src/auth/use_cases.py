@@ -15,7 +15,7 @@ from .repositories import (
     EmailVerificationTokenRepository,
 )
 from .services import password_service, jwt_service, auth_service
-from .schemas import RegisterRequest, LoginRequest
+from .schemas import RegisterRequest, LoginRequest, UserResponse
 from src.shared.exceptions import (
     UnauthorizedException,
     ResourceAlreadyExistsException,
@@ -78,6 +78,7 @@ class RegisterUserUseCase:
                 email=data.email,
                 password_hash=password_hash,
                 nombre=data.nombre,
+                apellido=data.apellido,
                 telefono=data.telefono,
                 email_verificado=False,
                 activo=True,
@@ -133,9 +134,12 @@ class RegisterUserUseCase:
             logger.debug("Evento 'usuario_registrado' emitido para usuario_id=%s", getattr(usuario, "id", None))
 
             logger.info("Usuario registrado: %s", usuario.email)
+            
+            # Convertir el usuario a UserResponse mientras estamos en la sesión
+            user_response = UserResponse.model_validate(usuario)
 
             return {
-                "user": usuario,
+                "user": user_response,
                 "tokens": tokens,
                 "verification_token": verification_token.token if verification_token else None,
             }
@@ -194,6 +198,9 @@ class LoginUserUseCase:
         # Actualizar último login
         await usuario_repo.update_ultimo_login(usuario.id)
         
+        # Refrescar el usuario para obtener todos los atributos actualizados
+        await session.refresh(usuario)
+        
         # Crear tokens JWT (el JWT usa string para el subject)
         tokens = auth_service.create_tokens(str(usuario.id), usuario.email)
         
@@ -222,8 +229,11 @@ class LoginUserUseCase:
         
         logger.info(f"Usuario autenticado: {usuario.email}")
         
+        # Convertir el usuario a UserResponse mientras estamos en la sesión
+        user_response = UserResponse.model_validate(usuario)
+        
         return {
-            "user": usuario,
+            "user": user_response,
             "tokens": tokens,
         }
 

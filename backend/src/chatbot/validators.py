@@ -1,182 +1,152 @@
 """
 Validadores de reglas de negocio para el chatbot.
+
+Alineado con MVP v2.3 - Sistema de límites Freemium.
+Funciones simplificadas. La detección de prompt se movió a ChatbotService.
 """
-from typing import Optional, Any
+from typing import Optional, Any, Dict
+import json
+
+from src.chatbot.models import TipoPrompt
 
 
-def validate_message_length(message: str, max_length: int = 10000) -> bool:
-    """Valida que el mensaje no exceda la longitud máxima."""
-    return len(message) <= max_length
+# ============================================
+# VALIDADORES BÁSICOS
+# ============================================
+
+def validate_message_length(message: str, max_length: int = 2000) -> bool:
+    """
+    Valida que el mensaje no exceda la longitud máxima.
+    
+    Args:
+        message: Mensaje a validar
+        max_length: Longitud máxima permitida (default: 2000 en v2.3)
+        
+    Returns:
+        True si es válido, False si excede el límite
+    """
+    return len(message.strip()) > 0 and len(message) <= max_length
 
 
 def validate_conversation_id(conversation_id: str) -> bool:
-    """Valida formato del conversation_id."""
+    """
+    Valida formato del conversation_id.
+    
+    Args:
+        conversation_id: ID de la conversación
+        
+    Returns:
+        True si el formato es válido
+    """
     return len(conversation_id) > 0 and len(conversation_id) <= 100
 
 
+def validate_conversation_title(titulo: str) -> bool:
+    """
+    Valida que el título de conversación sea válido.
+    
+    Args:
+        titulo: Título a validar
+        
+    Returns:
+        True si es válido
+    """
+    return 1 <= len(titulo.strip()) <= 200
+
+
 def validate_tipo_prompt(tipo: Optional[str]) -> bool:
-    """Valida que el tipo de prompt sea válido."""
+    """
+    Valida que el tipo de prompt sea válido.
+    
+    Args:
+        tipo: Tipo de prompt a validar
+        
+    Returns:
+        True si es None o es un tipo válido
+    """
     if tipo is None:
         return True
     
-    tipos_validos = ["diagnostic", "maintenance", "explanation", "general"]
+    tipos_validos = [tp.value for tp in TipoPrompt]
     return tipo in tipos_validos
 
 
-def can_send_message_freemium(mensajes_hoy: int, max_mensajes: int = 50) -> bool:
-    """Verifica si un usuario freemium puede enviar más mensajes hoy."""
-    return mensajes_hoy < max_mensajes
-
-
-def can_send_message_premium(mensajes_hoy: int, max_mensajes: int = 1000) -> bool:
-    """Verifica si un usuario premium puede enviar más mensajes hoy."""
-    return mensajes_hoy < max_mensajes
-
-
-def can_use_advanced_features(nivel_acceso: str) -> bool:
-    """Verifica si el usuario puede usar features avanzadas."""
-    return nivel_acceso == "premium"
-
-
-def validate_feedback(util: bool, feedback: Optional[str]) -> bool:
-    """Valida que el feedback sea válido."""
-    if feedback and len(feedback) > 1000:
-        return False
-    return True
-
-
-def should_limit_context(nivel_acceso: str) -> bool:
-    """Determina si se debe limitar el contexto de la conversación."""
-    return nivel_acceso == "freemium"
-
-
-def get_max_context_messages(nivel_acceso: str) -> int:
-    """Obtiene el número máximo de mensajes de contexto según el nivel."""
-    if nivel_acceso == "premium":
-        return 20  # Últimos 20 mensajes
-    return 5  # Freemium: últimos 5 mensajes
-
-
-def get_max_tokens(nivel_acceso: str) -> int:
-    """Obtiene el máximo de tokens permitidos por respuesta."""
-    if nivel_acceso == "premium":
-        return 2000
-    return 500
-
-
-def validate_streaming_support(nivel_acceso: str) -> bool:
-    """Valida si el nivel de acceso soporta streaming."""
-    # Ambos niveles soportan streaming
-    return True
-
-
-def calculate_confidence_threshold(nivel_acceso: str) -> float:
-    """Calcula el umbral de confianza mínimo para respuestas."""
-    if nivel_acceso == "premium":
-        return 0.6  # 60% confianza mínima
-    return 0.7  # 70% para freemium (más restrictivo)
-
-
-def should_use_advanced_model(nivel_acceso: str, tipo_prompt: str) -> bool:
-    """Determina si debe usar modelo avanzado."""
-    if nivel_acceso != "premium":
-        return False
+def validate_context_data(context: Dict[str, Any]) -> bool:
+    """
+    Valida que los datos de contexto sean válidos y no excedan el tamaño.
     
-    # Usar modelo avanzado para diagnósticos y mantenimiento en premium
-    return tipo_prompt in ["diagnostic", "maintenance"]
-
-
-def validate_conversation_title(titulo: str) -> bool:
-    """Valida que el título de conversación sea válido."""
-    return 1 <= len(titulo) <= 200
-
-
-def can_delete_conversation(usuario_id: int, conversacion_usuario_id: int) -> bool:
-    """Verifica si el usuario puede eliminar la conversación."""
-    return usuario_id == conversacion_usuario_id
-
-
-def can_clear_history(usuario_id: int, conversacion_usuario_id: int) -> bool:
-    """Verifica si el usuario puede limpiar el historial."""
-    return usuario_id == conversacion_usuario_id
-
-
-def should_archive_conversation(dias_inactiva: int) -> bool:
-    """Determina si una conversación debe archivarse."""
-    return dias_inactiva > 30  # Archivar después de 30 días de inactividad
-
-
-def validate_moto_access(usuario_id: int, moto_usuario_id: int) -> bool:
-    """Verifica que el usuario tenga acceso a la moto."""
-    return usuario_id == moto_usuario_id
-
-
-def get_rate_limit_config(nivel_acceso: str) -> dict[str, int]:
-    """Obtiene configuración de rate limiting según nivel."""
-    if nivel_acceso == "premium":
-        return {
-            "max_messages": 100,  # 100 mensajes por minuto
-            "window_seconds": 60,
-            "max_tokens_per_day": 100000
-        }
-    else:  # freemium
-        return {
-            "max_messages": 20,  # 20 mensajes por minuto
-            "window_seconds": 60,
-            "max_tokens_per_day": 10000
-        }
-
-
-def validate_context_data(context: dict[str, Any]) -> bool:
-    """Valida que los datos de contexto sean válidos."""
-    # Verificar tamaño razonable (evitar contextos excesivos)
-    import json
+    Args:
+        context: Diccionario con datos de contexto
+        
+    Returns:
+        True si el contexto es válido
+    """
     try:
         context_str = json.dumps(context)
         return len(context_str) <= 50000  # Max 50KB de contexto
-    except:
+    except (TypeError, ValueError):
         return False
 
 
-def should_use_diagnostic_prompt(message: str) -> bool:
-    """Determina si debe usar prompt de diagnóstico basado en el mensaje."""
-    keywords = [
-        "problema", "falla", "error", "no funciona", "ruido", "extraño",
-        "vibracion", "humo", "olor", "temperatura", "caliente", "frío",
-        "bateria", "motor", "freno", "diagnostico", "que pasa", "que tiene"
-    ]
-    message_lower = message.lower()
-    return any(keyword in message_lower for keyword in keywords)
+# ============================================
+# VALIDADORES DE ACCESO
+# ============================================
+
+def can_delete_conversation(usuario_id: int, conversacion_usuario_id: int) -> bool:
+    """
+    Verifica si el usuario puede eliminar la conversación.
+    
+    Args:
+        usuario_id: ID del usuario solicitante
+        conversacion_usuario_id: ID del usuario propietario
+        
+    Returns:
+        True si puede eliminar
+    """
+    return usuario_id == conversacion_usuario_id
 
 
-def should_use_maintenance_prompt(message: str) -> bool:
-    """Determina si debe usar prompt de mantenimiento."""
-    keywords = [
-        "mantenimiento", "servicio", "cambio", "aceite", "filtro", "llanta",
-        "revision", "cuando", "cada cuanto", "cuanto cuesta", "precio",
-        "taller", "reparacion", "repuesto"
-    ]
-    message_lower = message.lower()
-    return any(keyword in message_lower for keyword in keywords)
+def can_archive_conversation(usuario_id: int, conversacion_usuario_id: int) -> bool:
+    """
+    Verifica si el usuario puede archivar la conversación.
+    
+    Args:
+        usuario_id: ID del usuario solicitante
+        conversacion_usuario_id: ID del usuario propietario
+        
+    Returns:
+        True si puede archivar
+    """
+    return usuario_id == conversacion_usuario_id
 
 
-def should_use_explanation_prompt(message: str) -> bool:
-    """Determina si debe usar prompt de explicación."""
-    keywords = [
-        "que es", "como funciona", "para que sirve", "explica", "explicame",
-        "como se", "por que", "porque", "cual es", "que significa", "ayuda"
-    ]
-    message_lower = message.lower()
-    return any(keyword in message_lower for keyword in keywords)
+def validate_moto_access(usuario_id: int, moto_usuario_id: int) -> bool:
+    """
+    Verifica que el usuario tenga acceso a la moto.
+    
+    Args:
+        usuario_id: ID del usuario
+        moto_usuario_id: ID del propietario de la moto
+        
+    Returns:
+        True si tiene acceso
+    """
+    return usuario_id == moto_usuario_id
 
 
-def detect_prompt_type(message: str) -> str:
-    """Detecta automáticamente el tipo de prompt basado en el mensaje."""
-    if should_use_diagnostic_prompt(message):
-        return "diagnostic"
-    elif should_use_maintenance_prompt(message):
-        return "maintenance"
-    elif should_use_explanation_prompt(message):
-        return "explanation"
-    else:
-        return "general"
+# ============================================
+# UTILIDADES DE ARCHIVADO
+# ============================================
+
+def should_archive_conversation(dias_inactiva: int, umbral_dias: int = 30) -> bool:
+    """
+    Determina si una conversación debe archivarse automáticamente.
+    
+    Args:
+        dias_inactiva: Días desde la última actividad
+        umbral_dias: Umbral en días para archivar (default: 30)
+        
+    Returns:
+        True si debe archivarse
+    """
+    return dias_inactiva > umbral_dias

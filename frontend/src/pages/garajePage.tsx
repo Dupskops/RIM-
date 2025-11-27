@@ -1,32 +1,72 @@
 import FormularioNewMoto from '@/components/formulario';
-import { Plus, Edit, Trash } from 'lucide-react';
+import { Plus, Edit, Trash, CheckCircle } from 'lucide-react';
 import React, { useRef, useState, useEffect } from 'react';
+import apiClient from '@/config/api-client';
+import { MOTOS_ENDPOINTS } from '@/config/api-endpoints';
+import { useMotoStore } from '@/store';
+import toast from 'react-hot-toast';
 
 type Bike = {
     id: number;
-    title: string;
-    subtitle: string;
-    img?: string;
+    usuario_id: number;
+    modelo_moto_id: number;
+    vin: string;
+    placa: string | null;
+    color: string | null;
+    kilometraje_actual: string;
+    observaciones: string | null;
+    created_at: string;
+    updated_at: string;
+    // Campos para mostrar (por ahora usamos modelo_moto_id)
+    title?: string;  // Se construirá del modelo
+    subtitle?: string; // Se construirá del estado
+    img?: string; // Imagen por defecto
 };
 
-const bikes: Bike[] = [
-    { id: 1, title: 'Ducati Panigale V4', subtitle: 'Mantenimiento al día', img: 'https://azwecdnepstoragewebsiteuploads.azureedge.net/PHO_BIKE_90_LI_KTM-enduro-450-excf-6days-left-side-studio-image_%23SALL_%23AEPI_%23V1.png' },
-    { id: 2, title: 'Kawasaki Ninja', subtitle: 'Revisión pendiente', img: 'https://azwecdnepstoragewebsiteuploads.azureedge.net/PHO_BIKE_90_LI_KTM-300-exc-harenduro-left-side-studio-image_%23SALL_%23AEPI_%23V1.png' },
-    { id: 3, title: 'Honda CB1000R', subtitle: 'Listo para ruta', img: 'https://s7g10.scene7.com/is/image/ktm/KTM-naked-bikes-segment-1390-super-duke-revo-left-side?fmt=png-alpha&wid=1000&dpr=off' },
-];
-
 const GarajePage: React.FC = () => {
+    const { selectedMoto, setSelectedMoto } = useMotoStore();
     const carouselRef = useRef<HTMLDivElement | null>(null);
     const [active, setActive] = useState(0);
-    // Track image load state per bike id
-    const [imgLoaded, setImgLoaded] = useState<Record<number, boolean>>(() => {
-        const init: Record<number, boolean> = {};
-        bikes.forEach((b) => { init[b.id] = false; });
-        return init;
-    });
+    const [bikes, setBikes] = useState<Bike[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    // Auto-center the active card when the component mounts
+    // Track image load state per bike id
+    const [imgLoaded, setImgLoaded] = useState<Record<number, boolean>>({});
+
+    // Fetch motos from API
     useEffect(() => {
+        fetchMotos();
+    }, []);
+
+    const fetchMotos = async () => {
+        setLoading(true);
+        try {
+            const response = await apiClient.get(MOTOS_ENDPOINTS.BASE);
+            if (response.data && response.data.data) {
+                const motosData = response.data.data.map((moto: Bike) => ({
+                    ...moto,
+                    title: `Modelo ID: ${moto.modelo_moto_id}`, // Temporal hasta tener modelo_moto
+                    subtitle: `VIN: ${moto.vin.slice(-6)} • ${moto.kilometraje_actual} km`,
+                    img: 'https://s7g10.scene7.com/is/image/ktm/KTM-naked-bikes-segment-1390-super-duke-revo-left-side?fmt=png-alpha&wid=1000&dpr=off'
+                }));
+                setBikes(motosData);
+
+                // Initialize image loaded state
+                const imgState: Record<number, boolean> = {};
+                motosData.forEach((b: Bike) => { imgState[b.id] = false; });
+                setImgLoaded(imgState);
+            }
+        } catch (error: any) {
+            console.error('Error al cargar motos:', error);
+            toast.error('Error al cargar las motos');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Auto-center the active card when bikes load
+    useEffect(() => {
+        if (loading || bikes.length === 0) return;
         const el = carouselRef.current;
         if (!el) return;
         // small timeout to ensure layout is ready
@@ -37,7 +77,7 @@ const GarajePage: React.FC = () => {
         }, 80);
         return () => clearTimeout(t);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [loading, bikes]);
 
     // cleanup for fab timeout
     useEffect(() => {
@@ -62,11 +102,11 @@ const GarajePage: React.FC = () => {
     const [deleteCandidate, setDeleteCandidate] = useState<number | null>(null);
 
     return (
-        
+
         <div className=" bg-[var(--bg)] text-white">
             {/* Header centered */}
             <header className="relative px-4 py-4">
-                <h2 className="text-center text-lg font-bold text-[var(--card)]">Diagnóstico Avanzado</h2>
+                <h2 className="text-center text-lg font-bold text-[var(--card)]">Garaje KTM</h2>
             </header>
 
             <main className="content mx-auto px-4 flex flex-col items-center justify-center flex-1 w-full">
@@ -86,7 +126,17 @@ const GarajePage: React.FC = () => {
                                     if (index !== -1 && index !== active) setActive(index);
                                 }}
                             >
-                                {bikes.length === 0 ? (
+                                {loading ? (
+                                    <article className={`min-w-[280px] max-w-[320px] snap-center card relative rounded-lg p-3  bg-[var(--card)] border-3`}>
+                                        <div className="rounded-md overflow-hidden shadow-md flex items-center justify-center bg-[rgba(255,255,255,0.03)]" style={{ height: 160 }}>
+                                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[var(--accent)]"></div>
+                                        </div>
+                                        <div className="mt-3 text-center">
+                                            <div className="text-white font-extrabold text-lg">Cargando motos...</div>
+                                            <div className="text-[var(--color-2)] text-sm mt-1">Por favor espera</div>
+                                        </div>
+                                    </article>
+                                ) : bikes.length === 0 ? (
                                     <article className={`min-w-[280px] max-w-[320px] snap-center card relative rounded-lg p-3  bg-[var(--card)] border-3`}>
                                         <div className="rounded-md overflow-hidden shadow-md" style={{ height: 160 }}>
                                             <img src="/imagenes/moto-bg.jpeg" alt="Sin motos" className="w-full h-full object-cover" />
@@ -101,7 +151,7 @@ const GarajePage: React.FC = () => {
                                         <article
                                             key={b.id}
                                             className={`min-w-[280px] max-w-[320px] snap-center card relative rounded-lg p-3 mb-9 bg-[var(--card)] border-3`}
-                                            style={{ borderColor: i === active ? 'var(--accent)' : 'rgba(255,255,255,0.03)' , boxShadow: i === active ? 'var(--bg2)' : undefined }}
+                                            style={{ borderColor: i === active ? 'var(--accent)' : 'rgba(255,255,255,0.03)', boxShadow: i === active ? 'var(--bg2)' : undefined }}
                                         >
                                             <div className="rounded-md overflow-hidden shadow-md" style={{ height: 160 }}>
                                                 {/* show provided image or fallback to public image; also handle broken urls via onError */}
@@ -126,23 +176,44 @@ const GarajePage: React.FC = () => {
                                                 <div className="text-white font-extrabold text-lg">{b.title}</div>
                                                 <div className="text-[var(--color-2)] text-sm mt-1">{b.subtitle}</div>
 
-                                                {/* Acción: Editar / Eliminar (UI only) */}
-                                                <div className="mt-4 flex items-left justify-end gap-3">
+                                                {/* Acción: Usar / Editar / Eliminar */}
+                                                <div className="mt-4 flex items-left justify-between gap-3">
                                                     <button
-                                                        onClick={() => setShowForm(true)}
-                                                        title="Editar"
-                                                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-[rgba(255,255,255,0.06)] text-white border border-white/5 hover:scale-105 transition-transform"
+                                                        onClick={() => {
+                                                            setSelectedMoto(b as any);
+                                                            toast.success(`Moto ${b.title} seleccionada`);
+                                                        }}
+                                                        title={selectedMoto?.id === b.id ? 'Moto activa' : 'Usar esta moto'}
+                                                        className={`flex items-center gap-2 px-4 py-2 rounded-full font-semibold hover:scale-105 transition-transform ${
+                                                            selectedMoto?.id === b.id
+                                                                ? 'bg-[var(--accent)] text-[var(--muted)]'
+                                                                : 'bg-[rgba(255,255,255,0.06)] text-white border border-white/5'
+                                                        }`}
                                                     >
-                                                        <Edit size={14} />
+                                                        {selectedMoto?.id === b.id ? (
+                                                            <><CheckCircle size={14} /> Activa</>
+                                                        ) : (
+                                                            'Usar'
+                                                        )}
                                                     </button>
 
-                                                    <button
-                                                        onClick={() => { setDeleteCandidate(b.id); setShowDeleteConfirm(true); }}
-                                                        title="Eliminar"
-                                                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--accent)] text-[var(--muted)] font-semibold hover:scale-105 transition-transform"
-                                                    >
-                                                        <Trash size={14} />
-                                                    </button>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => setShowForm(true)}
+                                                            title="Editar"
+                                                            className="flex items-center gap-2 px-4 py-2 rounded-full bg-[rgba(255,255,255,0.06)] text-white border border-white/5 hover:scale-105 transition-transform"
+                                                        >
+                                                            <Edit size={14} />
+                                                        </button>
+
+                                                        <button
+                                                            onClick={() => { setDeleteCandidate(b.id); setShowDeleteConfirm(true); }}
+                                                            title="Eliminar"
+                                                            className="flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/80 text-white font-semibold hover:scale-105 transition-transform"
+                                                        >
+                                                            <Trash size={14} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </article>
@@ -184,7 +255,13 @@ const GarajePage: React.FC = () => {
                 >
                     <Plus />
                 </button>
-                <FormularioNewMoto showForm={showForm} onClose={() => setShowForm(false)} />
+                <FormularioNewMoto
+                    showForm={showForm}
+                    onClose={() => {
+                        setShowForm(false);
+                        fetchMotos(); // Recargar motos después de cerrar el formulario
+                    }}
+                />
                 {/* Confirmación personalizada para eliminar moto */}
                 {showDeleteConfirm && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center">

@@ -1,111 +1,152 @@
 """
-Rutas FastAPI para gestión de suscripciones.
-"""
-from typing import Annotated
-from fastapi import APIRouter, Depends, status
+Rutas FastAPI para gestión de suscripciones v2.3 Freemium.
 
-from ..config.dependencies import get_db, get_current_user, require_admin
+Endpoints para:
+- Listar planes disponibles (Free/Pro)
+- Consultar suscripción actual
+- Verificar límites de características
+- Registrar uso de características
+- Cambiar de plan (upgrade/downgrade)
+- Cancelar suscripción
+- Ver historial de uso
+"""
+from typing import Annotated, List
+from fastapi import APIRouter, Depends, status, HTTPException
+
+from ..config.dependencies import get_db, get_current_user
 from ..auth.models import Usuario
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.shared.base_models import (
-    ApiResponse,
-    SuccessResponse,
-    PaginatedResponse,
-    PaginationParams,
-    create_paginated_response,
-)
+from src.shared.base_models import ApiResponse
 
-from .repositories import SuscripcionRepository
-from .services import SuscripcionService
 from .schemas import (
-    CreateSuscripcionRequest,
-    UpdateSuscripcionRequest,
-    UpgradeToPremiumRequest,
-    CancelSuscripcionRequest,
-    RenewSuscripcionRequest,
-    SuscripcionFilterParams,
-    SuscripcionResponse,
-    SuscripcionStatsResponse,
+    PlanReadSchema,
+    SuscripcionReadSchema,
+    LimiteCheckResponse,
+    LimiteRegistroResponse,
+    UsoHistorialResponse,
+    CambiarPlanRequest,
 )
 from .use_cases import (
-    CreateSuscripcionUseCase,
-    GetSuscripcionUseCase,
-    GetActiveSuscripcionUseCase,
-    ListSuscripcionesUseCase,
-    UpgradeToPremiumUseCase,
+    ListPlanesUseCase,
+    GetMySuscripcionUseCase,
+    CheckLimiteUseCase,
+    RegistrarUsoUseCase,
+    GetHistorialUsoUseCase,
+    CambiarPlanUseCase,
     CancelSuscripcionUseCase,
-    RenewSuscripcionUseCase,
-    GetSuscripcionStatsUseCase
 )
+from .validators import validate_clave_caracteristica
 
 
 router = APIRouter()
 
 
-# ==================== DEPENDENCIES ====================
+# ==================== ENDPOINTS PÚBLICOS ====================
 
-async def get_suscripcion_repository(
-    db: Annotated[AsyncSession, Depends(get_db)]
-) -> SuscripcionRepository:
-    """Inyección de dependencia del repositorio de suscripciones."""
-    return SuscripcionRepository(db)
-
-
-def get_suscripcion_service() -> SuscripcionService:
-    """Inyección de dependencia del servicio de suscripciones."""
-    return SuscripcionService()
-
-
-# ==================== ENDPOINTS ====================
-
-@router.post(
-    "/",
-    response_model=ApiResponse[SuscripcionResponse],
-    status_code=status.HTTP_201_CREATED,
-    summary="Crear suscripción (Admin)",
-    dependencies=[Depends(require_admin)]
+@router.get(
+    "/planes",
+    response_model=ApiResponse[List[PlanReadSchema]],
+    summary="Listar planes disponibles",
+    tags=["Suscripciones - Público"]
 )
-async def create_suscripcion(
-    request: CreateSuscripcionRequest,
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
+async def list_planes(
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Crea una nueva suscripción (solo admins).
+    Lista todos los planes disponibles con sus características y límites.
     
-    - **usuario_id**: ID del usuario
-    - **plan**: Tipo de plan (freemium/premium)
-    - **duracion_meses**: Duración en meses (solo premium, 1-24)
-    - **precio**: Precio del plan (obligatorio para premium)
-    - **metodo_pago**: Método de pago (obligatorio para premium)
-    - **transaction_id**: ID de transacción (obligatorio para premium)
-    - **auto_renovacion**: Auto-renovación automática
-    - **notas**: Notas adicionales
+    **Planes v2.3 Freemium:**
+    - **FREE**: Plan gratuito ($0/mes)
+        - 11 características básicas
+        - Límites mensuales: CHATBOT (5), ML_PREDICTIONS (4), EXPORT_REPORTS (10)
+        - Max motos: 2
+    
+    - **Pro**: Plan premium ($29.99/mes)
+        - 15 características completas
+        - Límites ampliados: CHATBOT (50), ML_PREDICTIONS (100), EXPORT_REPORTS (ilimitado)
+        - Max motos: 5
+    
+    **Útil para:**
+    - UI de comparación de planes
+    - Página de pricing
+    - Validación de límites
+    
+    **Respuesta:**
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+            "id": 1,
+            "nombre_plan": "FREE",
+            "precio": "0.00",
+            "caracteristicas": [...]
+            },
+            {
+            "id": 2,
+            "nombre_plan": "Pro",
+            "precio": "29.99",
+            "caracteristicas": [...]
+            }
+        ]
+    }
+    ```
     """
-    use_case = CreateSuscripcionUseCase(repository, service)
-    suscripcion = await use_case.execute(request)
+    use_case = ListPlanesUseCase(db)
+    planes = await use_case.execute()
+    
     return ApiResponse(
         success=True,
-        message="Suscripción creada exitosamente",
-        data=suscripcion
+        message="Planes disponibles obtenidos exitosamente",
+        data=planes
     )
 
 
+# ==================== ENDPOINTS AUTENTICADOS ====================
+
 @router.get(
-    "/me",
-    response_model=ApiResponse[SuscripcionResponse],
-    summary="Obtener mi suscripción activa"
+    "/mi-suscripcion",
+    response_model=ApiResponse[SuscripcionReadSchema],
+    summary="Obtener mi suscripción actual",
+    tags=["Suscripciones - Usuario"]
 )
 async def get_my_suscripcion(
     current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
     Obtiene la suscripción activa del usuario autenticado.
+    
+    **Incluye:**
+    - Plan actual (Free/Pro)
+    - Características disponibles con límites
+    - Fechas de inicio/fin
+    - Estado de la suscripción
+    
+    **Respuesta:**
+    ```json
+    {
+        "success": true,
+        "data": {
+            "id": 1,
+            "usuario_id": 123,
+            "plan": {
+            "nombre_plan": "FREE",
+            "caracteristicas": [...]
+            },
+            "fecha_inicio": "2025-01-01T00:00:00",
+            "estado_suscripcion": "activa"
+        }
+    }
+    ```
     """
-    use_case = GetActiveSuscripcionUseCase(repository, service)
-    suscripcion = await use_case.execute(str(current_user.id))
+    use_case = GetMySuscripcionUseCase(db)
+    suscripcion = await use_case.execute(usuario_id=int(current_user.id))
+    
+    if not suscripcion:
+        from src.shared.exceptions import NotFoundError
+        raise NotFoundError("No tienes una suscripción activa. Contacta con soporte.")
+    
     return ApiResponse(
         success=True,
         message="Suscripción activa obtenida",
@@ -113,182 +154,355 @@ async def get_my_suscripcion(
     )
 
 
+
+
+
 @router.get(
-    "/",
-    response_model=PaginatedResponse[SuscripcionResponse],
-    summary="Listar suscripciones"
+    "/limites/historial",
+    response_model=ApiResponse[List[UsoHistorialResponse]],
+    summary="Ver historial de uso del mes",
+    tags=["Suscripciones - Límites"]
 )
-async def list_suscripciones(
-    filters: Annotated[SuscripcionFilterParams, Depends()],
-    pagination: Annotated[PaginationParams, Depends()],
+async def get_historial_uso(
     current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Lista suscripciones con filtros y paginación.
+    Obtiene el historial de uso de características del mes actual.
     
-    - **Usuarios normales**: Solo ven sus propias suscripciones
-    - **Admins**: Pueden ver todas las suscripciones y filtrar por usuario
+    **Muestra:**
+    - Todas las características usadas este mes
+    - Contador de usos por característica
+    - Límite mensual de cada una
+    - Último uso registrado
     
-    Filtros disponibles:
-    - **usuario_id**: ID del usuario (solo admins)
-    - **plan**: Tipo de plan (freemium/premium)
-    - **status**: Estado (active/cancelled/expired/pending)
-    - **activas_only**: Solo suscripciones activas
-    - **page**: Número de página (default: 1)
-    - **per_page**: Tamaño de página (default: 20, max: 100)
-    - **order_by**: Campo para ordenar (id, created_at, start_date, end_date)
-    - **order_direction**: Dirección (asc, desc)
+    **Útil para:**
+    - Dashboard de uso
+    - Página "Mi cuenta"
+    - Gráficas de consumo
+    
+    **Respuesta:**
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+            "caracteristica": "CHATBOT",
+            "usos_realizados": 3,
+            "limite_mensual": 5,
+            "ultimo_uso_at": "2025-11-15T10:30:00",
+            "periodo_mes": "2025-11-01"
+            },
+            {
+            "caracteristica": "ML_PREDICTIONS",
+            "usos_realizados": 2,
+            "limite_mensual": 4,
+            "ultimo_uso_at": "2025-11-14T15:20:00",
+            "periodo_mes": "2025-11-01"
+            }
+        ]
+    }
+    ```
     """
-    is_admin = getattr(current_user, 'rol', None) == "admin"
-    use_case = ListSuscripcionesUseCase(repository, service)
-    suscripciones, total = await use_case.execute(filters, pagination, str(current_user.id), is_admin)
+    use_case = GetHistorialUsoUseCase(db)
+    historial = await use_case.execute(usuario_id=int(current_user.id))
     
-    return create_paginated_response(
-        message="Suscripciones obtenidas exitosamente",
-        data=suscripciones,
-        page=pagination.page,
-        per_page=pagination.per_page,
-        total_items=total
+    return ApiResponse(
+        success=True,
+        message=f"Historial de uso obtenido ({len(historial)} características)",
+        data=historial
     )
 
 
 @router.get(
-    "/stats",
-    response_model=ApiResponse[SuscripcionStatsResponse],
-    summary="Estadísticas de suscripciones (Admin)",
-    dependencies=[Depends(require_admin)]
+    "/limites/{caracteristica}",
+    response_model=ApiResponse[LimiteCheckResponse],
+    summary="Verificar límite de característica",
+    tags=["Suscripciones - Límites"]
 )
-async def get_suscripcion_stats(
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)]
+async def check_limite(
+    caracteristica: str,
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Obtiene estadísticas de suscripciones (solo admins).
+    Verifica si el usuario puede usar una característica específica.
     
-    Incluye:
-    - Total de suscripciones registradas
-    - Suscripciones activas
-    - Suscripciones freemium
-    - Suscripciones premium
-    - Ingresos totales
-    - Tasa de conversión (% freemium → premium)
+    **Características válidas:**
+    - `CHATBOT`: Consultas al chatbot IA
+    - `ML_PREDICTIONS`: Predicciones de fallos ML
+    - `EXPORT_REPORTS`: Exportar reportes
+    - `CUSTOM_ALERTS`: Alertas personalizadas
+    - `MULTI_BIKE`: Número de motos registradas
+    - Y más...
+    
+    **Lógica:**
+    - Si `limite` es `null` = ilimitado (puede usar)
+    - Si `limite` es `0` = bloqueado (no puede usar)
+    - Si `usos_realizados >= limite` = límite alcanzado
+    - Reinicio automático cada mes (periodo_mes)
+    
+    **Ejemplo - Límite NO alcanzado:**
+    ```json
+    {
+        "puede_usar": true,
+        "usos_realizados": 3,
+        "limite": 5,
+        "usos_restantes": 2,
+        "mensaje": "Disponible: 2/5 usos restantes",
+        "periodo_actual": "2025-11-01"
+    }
+    ```
+    
+    **Ejemplo - Límite ALCANZADO:**
+    ```json
+    {
+        "puede_usar": false,
+        "usos_realizados": 5,
+        "limite": 5,
+        "usos_restantes": 0,
+        "mensaje": "Límite alcanzado (5/5). Resetea: 2025-12-01",
+        "periodo_actual": "2025-11-01"
+    }
+    ```
     """
-    use_case = GetSuscripcionStatsUseCase(repository)
-    stats = await use_case.execute()
+    # Validar característica
+    valido, error = validate_clave_caracteristica(caracteristica)
+    if not valido:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error
+        )
+    
+    use_case = CheckLimiteUseCase(db)
+    result = await use_case.execute(
+        usuario_id=int(current_user.id),
+        clave_caracteristica=caracteristica.upper()
+    )
+    
     return ApiResponse(
         success=True,
-        message="Estadísticas obtenidas exitosamente",
-        data=stats
+        message="Límite verificado",
+        data=result
     )
 
 
-@router.get(
-    "/{suscripcion_id}",
-    response_model=ApiResponse[SuscripcionResponse],
-    summary="Obtener suscripción por ID"
+@router.post(
+    "/limites/{caracteristica}/uso",
+    response_model=ApiResponse[LimiteRegistroResponse],
+    summary="Registrar uso de característica",
+    tags=["Suscripciones - Límites"],
+    status_code=status.HTTP_201_CREATED
 )
-async def get_suscripcion(
-    suscripcion_id: int,
+async def registrar_uso(
+    caracteristica: str,
     current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Obtiene una suscripción por ID.
+    Registra un uso de la característica y actualiza el contador mensual.
     
-    - **Usuarios normales**: Solo pueden ver sus propias suscripciones
-    - **Admins**: Pueden ver cualquier suscripción
+    **Flujo:**
+    1. Verifica que el usuario pueda usar la característica
+    2. Incrementa el contador de usos del mes
+    3. Retorna estado actualizado
+    
+    **Validaciones automáticas:**
+    - ❌ Si límite alcanzado → HTTP 403
+    - ❌ Si característica bloqueada (limite=0) → HTTP 403
+    - ✅ Si puede usar → incrementa contador y retorna 201
+    
+    **Uso típico:**
+    ```python
+    # Antes de ejecutar una acción limitada:
+    POST /api/suscripciones/limites/CHATBOT/uso
+    
+    # Si exitoso (201):
+    → Ejecutar acción (enviar mensaje al chatbot)
+    
+    # Si falla (403):
+    → Mostrar mensaje "Límite alcanzado, upgrade a Pro"
+    ```
+    
+    **Respuesta exitosa:**
+    ```json
+    {
+        "exito": true,
+        "usos_realizados": 4,
+        "limite": 5,
+        "usos_restantes": 1,
+        "mensaje": "Uso registrado. Restantes: 1/5"
+    }
+    ```
+    
+    **Respuesta límite alcanzado (403):**
+    ```json
+    {
+        "detail": "Límite alcanzado (5/5). Upgrade a Pro para más usos."
+    }
+    ```
     """
-    is_admin = getattr(current_user, 'rol', None) == "admin"
-    use_case = GetSuscripcionUseCase(repository, service)
-    suscripcion = await use_case.execute(suscripcion_id, str(current_user.id), is_admin)
+    # Validar característica
+    valido, error = validate_clave_caracteristica(caracteristica)
+    if not valido:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error
+        )
+    
+    use_case = RegistrarUsoUseCase(db)
+    
+    try:
+        result = await use_case.execute(
+            usuario_id=int(current_user.id),
+            clave_caracteristica=caracteristica.upper()
+        )
+    except ValueError as e:
+        # Límite alcanzado o característica bloqueada
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
+    
+    if not result.exito:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=result.mensaje
+        )
+    
     return ApiResponse(
         success=True,
-        message="Suscripción obtenida exitosamente",
+        message="Uso registrado exitosamente",
+        data=result
+    )
+
+
+@router.post(
+    "/cambiar-plan",
+    response_model=ApiResponse[SuscripcionReadSchema],
+    summary="Cambiar de plan (upgrade/downgrade)",
+    tags=["Suscripciones - Gestión"]
+)
+async def cambiar_plan(
+    request: CambiarPlanRequest,
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Cambia el plan del usuario (genérico para cualquier cambio).
+    
+    **Casos de uso:**
+    - Free → Pro (upgrade)
+    - Pro → Free (downgrade)
+    - Cualquier plan futuro
+    
+    **Validaciones:**
+    - ✅ plan_id debe existir en BD
+    - ✅ Usuario debe tener suscripción activa
+    - ⚠️ No validamos cambio al mismo plan (es idempotente)
+    
+    **Request:**
+    ```json
+    {
+      "plan_id": 2  // ID del plan Pro
+    }
+    ```
+    
+    **Respuesta:**
+    ```json
+    {
+        "success": true,
+        "message": "Plan cambiado exitosamente de FREE a Pro",
+        "data": {
+            "id": 1,
+            "usuario_id": 123,
+            "plan": {
+            "nombre_plan": "Pro",
+            "precio": "29.99",
+            "caracteristicas": [...]
+            }
+        }
+    }
+    ```
+    
+    **Nota:** En v2.3 Freemium no hay sistema de pagos. El cambio es inmediato.
+    En producción, upgrade a Pro requeriría validar pago primero.
+    """
+    use_case = CambiarPlanUseCase(db)
+    
+    try:
+        suscripcion = await use_case.execute(
+            usuario_id=int(current_user.id),
+            nuevo_plan_id=request.plan_id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
+    return ApiResponse(
+        success=True,
+        message=f"Plan cambiado exitosamente",
         data=suscripcion
     )
 
 
 @router.post(
-    "/upgrade",
-    response_model=ApiResponse[SuscripcionResponse],
-    summary="Upgrade a Premium"
-)
-async def upgrade_to_premium(
-    request: UpgradeToPremiumRequest,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
-):
-    """
-    Realiza upgrade de freemium a premium.
-    
-    - **duracion_meses**: Duración en meses (1-24)
-    - **precio**: Precio del plan (> 0)
-    - **metodo_pago**: Método de pago (tarjeta, paypal, transferencia, mercadopago, stripe)
-    - **transaction_id**: ID de transacción del pago (único)
-    - **auto_renovacion**: Si se renueva automáticamente
-    """
-    use_case = UpgradeToPremiumUseCase(repository, service)
-    suscripcion = await use_case.execute(str(current_user.id), request)
-    return ApiResponse(
-        success=True,
-        message="Upgrade a premium realizado exitosamente",
-        data=suscripcion
-    )
-
-
-@router.post(
-    "/cancel",
-    response_model=SuccessResponse[None],
-    summary="Cancelar suscripción"
+    "/cancelar",
+    response_model=ApiResponse[SuscripcionReadSchema],
+    summary="Cancelar suscripción (downgrade a Free)",
+    tags=["Suscripciones - Gestión"]
 )
 async def cancel_suscripcion(
-    request: CancelSuscripcionRequest,
     current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
-    Cancela la suscripción activa del usuario.
+    Cancela la suscripción Pro del usuario (downgrade a Free).
     
-    - **razon**: Razón de cancelación (opcional)
-    """
-    use_case = CancelSuscripcionUseCase(repository, service)
-    await use_case.execute(str(current_user.id), request)
-    return SuccessResponse(
-        message="Suscripción cancelada exitosamente",
-        data=None
-    )
-
-
-@router.post(
-    "/renew",
-    response_model=ApiResponse[SuscripcionResponse],
-    summary="Renovar suscripción Premium"
-)
-async def renew_suscripcion(
-    request: RenewSuscripcionRequest,
-    current_user: Annotated[Usuario, Depends(get_current_user)],
-    repository: Annotated[SuscripcionRepository, Depends(get_suscripcion_repository)],
-    service: Annotated[SuscripcionService, Depends(get_suscripcion_service)]
-):
-    """
-    Renueva la suscripción premium del usuario.
+    **Comportamiento:**
+    - Si usuario tiene plan Pro → downgrade inmediato a Free
+    - Si usuario ya tiene plan Free → error (nada que cancelar)
     
-    - **duracion_meses**: Duración en meses (1-24)
-    - **precio**: Precio del plan (> 0)
-    - **transaction_id**: ID de transacción del pago (único)
+    **Lógica v2.3:**
+    - Cancelación siempre es inmediata
+    - No hay periodo de gracia ni reembolsos
+    - Límites se ajustan automáticamente a Free
     
-    La nueva fecha de fin se calcula desde:
-    - La fecha de fin actual (si aún no expiró)
-    - La fecha actual (si ya expiró)
+    **Respuesta exitosa:**
+    ```json
+    {
+        "success": true,
+        "message": "Suscripción Pro cancelada. Downgrade a FREE completado",
+        "data": {
+            "plan": {
+            "nombre_plan": "FREE"
+            }
+        }
+    }
+    ```
+    
+    **Error - ya en Free (400):**
+    ```json
+    {
+        "detail": "No puedes cancelar el plan FREE. Ya tienes el plan base gratuito."
+    }
+    ```
     """
-    use_case = RenewSuscripcionUseCase(repository, service)
-    suscripcion = await use_case.execute(str(current_user.id), request)
+    use_case = CancelSuscripcionUseCase(db)
+    
+    try:
+        suscripcion = await use_case.execute(usuario_id=int(current_user.id))
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
     return ApiResponse(
         success=True,
-        message="Suscripción renovada exitosamente",
+        message="Suscripción cancelada exitosamente. Downgrade a FREE completado",
         data=suscripcion
     )
+

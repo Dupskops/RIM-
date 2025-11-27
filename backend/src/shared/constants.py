@@ -112,33 +112,29 @@ SENSOR_RANGES = {
 # ============================================
 # FALLAS
 # ============================================
-class TipoFalla(str, Enum):
-    """Tipos de fallas detectables."""
-    SOBRECALENTAMIENTO = "sobrecalentamiento"
-    BATERIA_BAJA = "bateria_baja"
-    PRESION_ACEITE_BAJA = "presion_aceite_baja"
-    VIBRACIONES_ANORMALES = "vibraciones_anormales"
-    PRESION_LLANTAS_INCORRECTA = "presion_llantas_incorrecta"
-    SENSOR_DESCONECTADO = "sensor_desconectado"
-    CAIDA_DETECTADA = "caida_detectada"
-    NIVEL_COMBUSTIBLE_CRITICO = "nivel_combustible_critico"
+# ============================================
+# FALLAS - DEPRECADO v2.3
+# ============================================
+# NOTA: Los ENUMs de fallas ahora están definidos en src/fallas/models.py
+# para mantener consistencia con CREATE_TABLES_MVP_V2.2.sql
+# 
+# Importar desde: from src.fallas import SeveridadFalla, EstadoFalla, OrigenDeteccion
+# 
+# Los tipos de falla son ahora valores libres (VARCHAR) en vez de ENUM, 
+# permitiendo mayor flexibilidad en detección de nuevos tipos de fallas.
+# ============================================
 
+# class TipoFalla(str, Enum):
+#     """DEPRECADO - Usar string libre en campo 'tipo'"""
+#     pass
 
-class SeveridadFalla(str, Enum):
-    """Niveles de severidad de fallas."""
-    INFO = "info"
-    BAJA = "baja"
-    MEDIA = "media"
-    ALTA = "alta"
-    CRITICA = "critica"
+# class SeveridadFalla(str, Enum):
+#     """DEPRECADO - Ahora en src.fallas.models"""
+#     pass
 
-
-class EstadoFalla(str, Enum):
-    """Estados de una falla."""
-    DETECTADA = "detectada"
-    EN_REVISION = "en_revision"
-    RESUELTA = "resuelta"
-    IGNORADA = "ignorada"
+# class EstadoFalla(str, Enum):
+#     """DEPRECADO - Ahora en src.fallas.models"""
+#     pass
 
 
 # ============================================

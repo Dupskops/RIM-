@@ -1,145 +1,69 @@
 """
-Validadores personalizados para motos.
+Validadores de negocio para el módulo de motos.
+
+IMPORTANTE: Las validaciones de formato básico (VIN, placa, etc.) están en schemas.py
+con Pydantic validators. Este archivo contiene solo validaciones de lógica de negocio
+compleja que no pueden expresarse fácilmente en Pydantic.
+
+Versión: v2.3 MVP
 """
-import re
-from typing import Optional
+from decimal import Decimal
 
 
-def validate_vin(vin: str) -> tuple[bool, Optional[str]]:
+# ============================================
+# CONSTANTES DE VALIDACIÓN
+# ============================================
+
+KILOMETRAJE_MAX = Decimal("999999.9")
+
+# ============================================
+# VALIDADORES DE LÓGICA DE NEGOCIO
+# ============================================
+
+def validate_kilometraje(kilometraje: Decimal) -> Decimal:
     """
-    Valida formato de VIN (Vehicle Identification Number).
+    Valida que el kilometraje esté en rango permitido.
     
-    El VIN debe tener exactamente 17 caracteres alfanuméricos.
-    No puede contener las letras I, O, Q (para evitar confusión con 1, 0).
+    Reglas:
+    - No negativo
+    - Máximo 999,999.9 km
     
     Args:
-        vin: VIN a validar
+        kilometraje: Valor a validar
         
     Returns:
-        Tupla (es_válido, mensaje_error)
-    """
-    if not vin:
-        return False, "El VIN es requerido"
-    
-    # Remover espacios
-    vin = vin.strip().upper()
-    
-    # Debe tener exactamente 17 caracteres
-    if len(vin) != 17:
-        return False, "El VIN debe tener exactamente 17 caracteres"
-    
-    # Solo alfanuméricos
-    if not re.match(r"^[A-HJ-NPR-Z0-9]{17}$", vin):
-        return False, "El VIN solo puede contener letras (excepto I, O, Q) y números"
-    
-    return True, None
-
-
-def validate_placa(placa: str) -> tuple[bool, Optional[str]]:
-    """
-    Valida formato de placa.
-    
-    Formato flexible para diferentes países.
-    
-    Args:
-        placa: Placa a validar
+        Decimal: Kilometraje validado
         
-    Returns:
-        Tupla (es_válida, mensaje_error)
-    """
-    if not placa:
-        return True, None  # Placa es opcional
-    
-    # Remover espacios
-    placa = placa.strip().upper()
-    
-    # Longitud razonable (3-20 caracteres)
-    if len(placa) < 3 or len(placa) > 20:
-        return False, "La placa debe tener entre 3 y 20 caracteres"
-    
-    # Solo alfanuméricos y guiones
-    if not re.match(r"^[A-Z0-9\-]+$", placa):
-        return False, "La placa solo puede contener letras, números y guiones"
-    
-    return True, None
-
-
-def validate_año(año: int) -> tuple[bool, Optional[str]]:
-    """
-    Valida año de fabricación.
-    
-    Args:
-        año: Año a validar
-        
-    Returns:
-        Tupla (es_válido, mensaje_error)
-    """
-    # Año razonable (desde 1990 hasta año actual + 1)
-    from datetime import datetime
-    current_year = datetime.now().year
-    
-    if año < 1990:
-        return False, "El año debe ser posterior a 1990"
-    
-    if año > current_year + 1:
-        return False, f"El año no puede ser posterior a {current_year + 1}"
-    
-    return True, None
-
-
-def validate_kilometraje(kilometraje: int) -> tuple[bool, Optional[str]]:
-    """
-    Valida kilometraje.
-    
-    Args:
-        kilometraje: Kilometraje a validar
-        
-    Returns:
-        Tupla (es_válido, mensaje_error)
+    Raises:
+        ValueError: Si el kilometraje está fuera de rango
     """
     if kilometraje < 0:
-        return False, "El kilometraje no puede ser negativo"
-    
-    # Límite razonable (999,999 km)
-    if kilometraje > 999999:
-        return False, "El kilometraje parece excesivo (máximo 999,999 km)"
-    
-    return True, None
+        raise ValueError("El kilometraje no puede ser negativo")
+    if kilometraje > KILOMETRAJE_MAX:
+        raise ValueError(f"El kilometraje excede el límite permitido ({KILOMETRAJE_MAX} km)")
+    return kilometraje
 
 
-def validate_marca_ktm(marca: str) -> tuple[bool, Optional[str]]:
+def validate_kilometraje_no_disminuye(
+    kilometraje_nuevo: Decimal,
+    kilometraje_actual: Decimal
+) -> None:
     """
-    Valida que la marca sea KTM.
+    Valida regla de negocio: el kilometraje nunca puede disminuir.
+    
+    Esta es una validación de lógica de negocio que requiere comparar
+    con el estado actual de la moto en base de datos.
     
     Args:
-        marca: Marca a validar
+        kilometraje_nuevo: Nuevo kilometraje a establecer
+        kilometraje_actual: Kilometraje actual en base de datos
         
-    Returns:
-        Tupla (es_válida, mensaje_error)
+    Raises:
+        ValueError: Si el nuevo kilometraje es menor al actual
     """
-    if not marca:
-        return False, "La marca es requerida"
-    
-    if marca.upper() != "KTM":
-        return False, "Solo se permiten motos de marca KTM"
-    
-    return True, None
+    if kilometraje_nuevo < kilometraje_actual:
+        raise ValueError(
+            f"El kilometraje no puede disminuir "
+            f"(actual: {kilometraje_actual} km, nuevo: {kilometraje_nuevo} km)"
+        )
 
-
-def validate_modelo(modelo: str) -> tuple[bool, Optional[str]]:
-    """
-    Valida nombre de modelo.
-    
-    Args:
-        modelo: Modelo a validar
-        
-    Returns:
-        Tupla (es_válido, mensaje_error)
-    """
-    if not modelo or len(modelo.strip()) < 2:
-        return False, "El modelo debe tener al menos 2 caracteres"
-    
-    if len(modelo) > 100:
-        return False, "El modelo no puede exceder 100 caracteres"
-    
-    return True, None

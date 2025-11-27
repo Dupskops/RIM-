@@ -1,84 +1,80 @@
-"""
-Módulo de gestión de motos KTM.
-"""
-from .models import Moto
+from .models import (
+    Moto,
+    ModeloMoto,
+    Componente,
+    Parametro,
+    ReglaEstado,
+    EstadoActual,
+    LogicaRegla,
+    EstadoSalud
+)
+
 from .schemas import (
-    RegisterMotoRequest,
-    UpdateMotoRequest,
-    UpdateKilometrajeRequest,
-    #SearchMotosRequest,
-    MotoResponse,
-    #MotoListResponse,
-    MotoStatsResponse,
-    #MessageResponse
+    MotoCreateSchema,
+    MotoReadSchema,
+    MotoUpdateSchema,
+    MotoListResponse,
+    ModeloMotoSchema,
+    EstadoActualSchema,
+    DiagnosticoGeneralSchema,
+    ComponenteReadSchema,
+    ParametroReadSchema,
+    ReglaEstadoCreateSchema,
+    ReglaEstadoReadSchema
 )
-from .repositories import MotoRepository
-from .services import MotoService
+
 from .events import (
-    MotoRegisteredEvent,
-    MotoUpdatedEvent,
-    MotoDeletedEvent,
-    KilometrajeUpdatedEvent,
-    MotoTransferredEvent,
-    emit_moto_registered,
-    emit_moto_updated,
-    emit_moto_deleted,
-    emit_kilometraje_updated,
-    emit_moto_transferred
+    EstadoCambiadoEvent,
+    EstadoCriticoDetectadoEvent,
+    ServicioVencidoEvent,
+    KilometrajeActualizadoEvent,
+    emit_estado_cambiado,
+    emit_estado_critico_detectado,
+    emit_servicio_vencido,
+    emit_kilometraje_actualizado
 )
-from .use_cases import (
-    RegisterMotoUseCase,
-    GetMotoUseCase,
-    ListMotosUseCase,
-    UpdateMotoUseCase,
-    DeleteMotoUseCase,
-    UpdateKilometrajeUseCase,
-    GetMotoStatsUseCase
-)
+
 from .routes import router as motos_router
 
+from .event_handlers import register_motos_event_handlers
 
 __all__ = [
     # Models
     "Moto",
+    "ModeloMoto",
+    "Componente",
+    "Parametro",
+    "ReglaEstado",
+    "EstadoActual",
+    "LogicaRegla",
+    "EstadoSalud",
     
     # Schemas
-    "RegisterMotoRequest",
-    "UpdateMotoRequest",
-    "UpdateKilometrajeRequest",
-    #"SearchMotosRequest",
-    "MotoResponse",
-    #"MotoListResponse",
-    "MotoStatsResponse",
-    #"MessageResponse",
-    
-    # Repository
-    "MotoRepository",
-    
-    # Services
-    "MotoService",
+    "MotoCreateSchema",
+    "MotoReadSchema",
+    "MotoUpdateSchema",
+    "MotoListResponse",
+    "ModeloMotoSchema",
+    "EstadoActualSchema",
+    "DiagnosticoGeneralSchema",
+    "ComponenteReadSchema",
+    "ParametroReadSchema",
+    "ReglaEstadoCreateSchema",
+    "ReglaEstadoReadSchema",
     
     # Events
-    "MotoRegisteredEvent",
-    "MotoUpdatedEvent",
-    "MotoDeletedEvent",
-    "KilometrajeUpdatedEvent",
-    "MotoTransferredEvent",
-    "emit_moto_registered",
-    "emit_moto_updated",
-    "emit_moto_deleted",
-    "emit_kilometraje_updated",
-    "emit_moto_transferred",
-    
-    # Use Cases
-    "RegisterMotoUseCase",
-    "GetMotoUseCase",
-    "ListMotosUseCase",
-    "UpdateMotoUseCase",
-    "DeleteMotoUseCase",
-    "UpdateKilometrajeUseCase",
-    "GetMotoStatsUseCase",
+    "EstadoCambiadoEvent",
+    "EstadoCriticoDetectadoEvent",
+    "ServicioVencidoEvent",
+    "KilometrajeActualizadoEvent",
+    "emit_estado_cambiado",
+    "emit_estado_critico_detectado",
+    "emit_servicio_vencido",
+    "emit_kilometraje_actualizado",
     
     # Router
     "motos_router",
+    
+    # Event Handlers
+    "register_motos_event_handlers"
 ]

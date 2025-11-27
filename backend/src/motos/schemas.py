@@ -1,197 +1,213 @@
 """
-Schemas Pydantic para motos (DTOs).
+Schemas Pydantic para el módulo de motos.
+
+Define los modelos de datos para validación y serialización de requests/responses.
+Las validaciones de formato se hacen aquí con @field_validator.
+Las validaciones de lógica de negocio compleja se hacen en use_cases.py.
+
+Versión: v2.3 MVP
 """
 from datetime import datetime
-from typing import Optional, Literal
+from typing import Optional, Dict, Any
+from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator
-
-from src.shared.base_models import FilterParams
-from .validators import (
-    validate_vin,
-    validate_placa,
-    validate_año,
-    validate_kilometraje,
-    validate_marca_ktm,
-    validate_modelo,
-)
+from .models import EstadoSalud, LogicaRegla
 
 
-# ==================== REQUEST SCHEMAS ====================
+# ============================================
+# SCHEMAS DE MODELO DE MOTO (CATÁLOGO)
+# ============================================
 
-class RegisterMotoRequest(BaseModel):
-    """Request para registrar una nueva moto."""
-    
-    vin: str = Field(..., description="VIN de 17 caracteres")
-    modelo: str = Field(..., description="Modelo de la moto (ej: Duke 390)")
-    año: int = Field(..., description="Año de fabricación")
-    placa: Optional[str] = Field(None, description="Placa de la moto")
-    color: Optional[str] = Field(None, max_length=50, description="Color de la moto")
-    kilometraje: int = Field(default=0, ge=0, description="Kilometraje actual")
-    observaciones: Optional[str] = Field(None, description="Observaciones adicionales")
-    
-    # Validadores
-    @field_validator("vin")
-    @classmethod
-    def validate_vin_field(cls, v: str) -> str:
-        is_valid, error_msg = validate_vin(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v.strip().upper()
-    
-    @field_validator("placa")
-    @classmethod
-    def validate_placa_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_placa(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v.strip().upper()
-    
-    @field_validator("año")
-    @classmethod
-    def validate_año_field(cls, v: int) -> int:
-        is_valid, error_msg = validate_año(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("kilometraje")
-    @classmethod
-    def validate_kilometraje_field(cls, v: int) -> int:
-        is_valid, error_msg = validate_kilometraje(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("modelo")
-    @classmethod
-    def validate_modelo_field(cls, v: str) -> str:
-        is_valid, error_msg = validate_modelo(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v.strip()
-
-
-class UpdateMotoRequest(BaseModel):
-    """Request para actualizar una moto (actualización parcial)."""
-    
-    placa: Optional[str] = Field(None, description="Nueva placa")
-    color: Optional[str] = Field(None, max_length=50, description="Nuevo color")
-    kilometraje: Optional[int] = Field(None, ge=0, description="Nuevo kilometraje")
-    observaciones: Optional[str] = Field(None, description="Nuevas observaciones")
-    
-    # Validadores
-    @field_validator("placa")
-    @classmethod
-    def validate_placa_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_placa(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v.strip().upper()
-    
-    @field_validator("kilometraje")
-    @classmethod
-    def validate_kilometraje_field(cls, v: Optional[int]) -> Optional[int]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_kilometraje(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class UpdateKilometrajeRequest(BaseModel):
-    """Request para actualizar solo el kilometraje."""
-    
-    kilometraje: int = Field(..., ge=0, description="Nuevo kilometraje")
-    
-    @field_validator("kilometraje")
-    @classmethod
-    def validate_kilometraje_field(cls, v: int) -> int:
-        is_valid, error_msg = validate_kilometraje(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class MotoFilterParams(FilterParams):
-    """Parámetros de filtrado para motos."""
-    
-    usuario_id: Optional[int] = Field(None, description="Filtrar por usuario")
-    modelo: Optional[str] = Field(None, description="Filtrar por modelo (búsqueda parcial)")
-    año_desde: Optional[int] = Field(None, description="Año de fabricación desde")
-    año_hasta: Optional[int] = Field(None, description="Año de fabricación hasta")
-    vin: Optional[str] = Field(None, description="Buscar por VIN")
-    placa: Optional[str] = Field(None, description="Buscar por placa")
-    
-    # Ordenamiento
-    order_by: Literal["id", "created_at", "año", "kilometraje", "modelo"] = Field(
-        default="created_at",
-        description="Campo para ordenar"
-    )
-    order_direction: Literal["asc", "desc"] = Field(
-        default="desc",
-        description="Dirección del ordenamiento"
-    )
-    
-    # Validadores
-    @field_validator("año_desde", "año_hasta")
-    @classmethod
-    def validate_año_field(cls, v: Optional[int]) -> Optional[int]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_año(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-# ==================== RESPONSE SCHEMAS ====================
-
-class UsuarioBasicInfo(BaseModel):
-    """Información básica del usuario (para incluir en respuesta de moto)."""
-    
+class ModeloMotoSchema(BaseModel):
+    """Schema para modelos de motos disponibles (catálogo)."""
     id: int
-    nombre: str
-    apellido: str
-    email: str
-
-
-class MotoResponse(BaseModel):
-    """Response con información completa de una moto."""
-    
-    id: int
-    usuario_id: int
-    marca: str
-    modelo: str
+    nombre: str  # "KTM 390 Duke 2024"
+    marca: str   # "KTM"
     año: int
-    vin: str
-    placa: Optional[str]
-    color: Optional[str]
-    kilometraje: int
-    observaciones: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-    deleted_at: Optional[datetime]
-    
-    # Relaciones
-    usuario: Optional[UsuarioBasicInfo] = None
-    
-    # Propiedades computadas
-    nombre_completo: Optional[str] = None
-    es_ktm: Optional[bool] = None
+    cilindrada: Optional[str] = None
+    tipo_motor: Optional[str] = None
+    especificaciones_tecnicas: Optional[Dict[str, Any]] = None
+    activo: bool
     
     class Config:
         from_attributes = True
 
 
-class MotoStatsResponse(BaseModel):
-    """Response con estadísticas de motos."""
+# ============================================
+# SCHEMAS DE MOTO (INSTANCIA)
+# ============================================
+
+class MotoCreateSchema(BaseModel):
+    """
+    Schema para crear una nueva moto.
     
-    total_motos: int
-    motos_por_año: dict[int, int]
-    kilometraje_promedio: float
-    modelos_populares: list[dict[str, int]]  # [{"modelo": "Duke 390", "count": 5}]
+    Validaciones de formato se ejecutan automáticamente con Pydantic.
+    Validaciones de negocio (unicidad VIN, existencia modelo) se hacen en el use case.
+    """
+    vin: str = Field(..., min_length=17, max_length=17, description="Vehicle Identification Number (17 caracteres)")
+    modelo_moto_id: int = Field(..., gt=0, description="ID del modelo de moto (catálogo)")
+    placa: Optional[str] = Field(None, max_length=20, description="Placa vehicular")
+    color: Optional[str] = Field(None, max_length=50)
+    kilometraje_actual: Decimal = Field(default=Decimal("0.0"), ge=0, le=Decimal("999999.9"))
+    observaciones: Optional[str] = None
+    
+    @field_validator("vin")
+    @classmethod
+    def validate_vin(cls, v: str) -> str:
+        """
+        Valida formato de VIN según estándar ISO 3779.
+        
+        Reglas:
+        - Exactamente 17 caracteres alfanuméricos
+        - No permite I, O, Q (confusión visual con 1, 0)
+        - Convierte a MAYÚSCULAS
+        """
+        v = v.strip().upper()
+        if not v.isalnum():
+            raise ValueError("El VIN solo puede contener caracteres alfanuméricos")
+        if any(char in v for char in "IOQ"):
+            raise ValueError("El VIN no puede contener las letras I, O, Q (confusión con 1, 0)")
+        return v
+    
+    @field_validator("placa")
+    @classmethod
+    def validate_placa(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Valida formato de placa vehicular.
+        
+        Reglas:
+        - Mínimo 3 caracteres si se proporciona
+        - Convierte a MAYÚSCULAS
+        - Elimina espacios extra
+        """
+        if v:
+            v = v.strip().upper()
+            if len(v) < 3:
+                raise ValueError("La placa debe tener al menos 3 caracteres")
+        return v
+    
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, v: Optional[str]) -> Optional[str]:
+        """Normaliza color eliminando espacios extra."""
+        if v:
+            v = v.strip()
+        return v
+
+
+class MotoReadSchema(BaseModel):
+    """Schema de respuesta con datos completos de una moto."""
+    id: int  # PK actualizado: moto_id → id
+    usuario_id: int
+    modelo_moto_id: int  # FK al catálogo de modelos
+    vin: str
+    placa: str
+    color: Optional[str]
+    kilometraje_actual: Decimal
+    observaciones: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class MotoUpdateSchema(BaseModel):
+    """
+    Schema para actualizar una moto existente.
+    
+    Nota: VIN y modelo_moto_id no son actualizables (datos inmutables).
+    """
+    placa: Optional[str] = Field(None, max_length=20)
+    color: Optional[str] = Field(None, max_length=50)
+    kilometraje_actual: Optional[Decimal] = Field(None, ge=0, le=Decimal("999999.9"))
+    observaciones: Optional[str] = None
+    
+    @field_validator("placa")
+    @classmethod
+    def validate_placa(cls, v: Optional[str]) -> Optional[str]:
+        """Valida formato de placa si se proporciona."""
+        if v:
+            v = v.strip().upper()
+            if len(v) < 3:
+                raise ValueError("La placa debe tener al menos 3 caracteres")
+        return v
+    
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, v: Optional[str]) -> Optional[str]:
+        """Normaliza color eliminando espacios extra."""
+        if v:
+            v = v.strip()
+        return v
+
+
+class MotoListResponse(BaseModel):
+    items: list[MotoReadSchema]
+    total: int
+    page: int
+    per_page: int
+
+
+class EstadoActualSchema(BaseModel):
+    id: int  # PK actualizado: estado_actual_id → id
+    moto_id: int
+    componente_id: int
+    componente_nombre: Optional[str] = None
+    ultimo_valor: Optional[Decimal] = None
+    estado: EstadoSalud
+    ultima_actualizacion: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class DiagnosticoGeneralSchema(BaseModel):
+    moto_id: int
+    estado_general: EstadoSalud
+    componentes: list[EstadoActualSchema]
+    ultima_actualizacion: datetime
+
+
+class ComponenteReadSchema(BaseModel):
+    id: int  # PK actualizado: componente_id → id
+    modelo_moto_id: int
+    nombre: str
+    mesh_id_3d: Optional[str]
+    descripcion: Optional[str]
+    
+    class Config:
+        from_attributes = True
+
+
+class ParametroReadSchema(BaseModel):
+    id: int  # PK actualizado: parametro_id → id
+    nombre: str
+    unidad_medida: str
+    
+    class Config:
+        from_attributes = True
+
+
+class ReglaEstadoCreateSchema(BaseModel):
+    componente_id: int
+    parametro_id: int
+    logica: LogicaRegla
+    limite_bueno: Optional[Decimal] = None
+    limite_atencion: Optional[Decimal] = None
+    limite_critico: Optional[Decimal] = None
+
+
+class ReglaEstadoReadSchema(BaseModel):
+    id: int  # PK actualizado: regla_id → id
+    componente_id: int
+    parametro_id: int
+    logica: LogicaRegla
+    limite_bueno: Optional[Decimal]
+    limite_atencion: Optional[Decimal]
+    limite_critico: Optional[Decimal]
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True

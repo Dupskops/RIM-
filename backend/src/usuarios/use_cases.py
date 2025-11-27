@@ -18,7 +18,6 @@ from src.shared.base_models import PaginationParams
 from src.shared.exceptions import (
     ResourceAlreadyExistsException,
     ResourceNotFoundException,
-    ValidationException,
 )
 from . import events
 

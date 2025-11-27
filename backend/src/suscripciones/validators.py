@@ -1,148 +1,171 @@
 """
-Validadores personalizados para suscripciones.
+Validadores para el módulo de suscripciones v2.3 Freemium.
+
+Proporciona funciones de validación para requests de suscripciones,
+alineados con la arquitectura v2.3 (Free/Pro sin sistema de pagos).
 """
-from datetime import datetime, timedelta
-from typing import Optional
+from __future__ import annotations
 
-from .models import PlanType, SuscripcionStatus
+from typing import Optional, Any, Dict, Union
+
+from pydantic import BaseModel
+
+from .schemas import (
+    CambiarPlanRequest,
+    SuscripcionCancelRequest,
+)
 
 
-def validate_plan(plan: str) -> tuple[bool, Optional[str]]:
-    """
-    Valida tipo de plan.
+# Claves de características válidas en v2.3 (alineadas con SEED_DATA_MVP_V2.2.sql)
+CARACTERISTICAS_VALIDAS = {
+    # TIER 1: Básicas (Free + Pro) - Ilimitadas
+    "ALERTS_CRITICAL",
+    "SERVICE_HISTORY",
+    "BASIC_DIAGNOSTICS",
+    "LIVE_LOCATION",
+    "TRIP_HISTORY",
+    "PERFORMANCE_STATS",
+    # TIER 2: Con límite en Free
+    "CHATBOT",
+    "ML_PREDICTIONS",
+    "CUSTOM_ALERTS",
+    "EXPORT_REPORTS",
+    # TIER 3: Premium (Solo Pro)
+    "MULTI_BIKE",
+    "ADVANCED_ANALYTICS",
+    "PREDICTIVE_MAINTENANCE",
+    "RIDING_MODES",
+    "PRIORITY_SUPPORT",
+}
+
+
+def validate_clave_caracteristica(clave: str) -> tuple[bool, Optional[str]]:
+    """Valida que la clave de característica sea válida.
     
     Args:
-        plan: Plan a validar
+        clave: Clave de la característica (ej: 'CHATBOT', 'ML_PREDICTIONS')
         
     Returns:
-        Tupla (es_válido, mensaje_error)
+        Tupla (valido, mensaje_error)
     """
-    valid_plans = [p.value for p in PlanType]
+    if not clave or not clave.strip():
+        return False, "La clave de característica no puede estar vacía"
     
-    if plan not in valid_plans:
-        return False, f"Plan inválido. Debe ser uno de: {', '.join(valid_plans)}"
+    clave_upper = clave.upper()
+    
+    if clave_upper not in CARACTERISTICAS_VALIDAS:
+        return False, (
+            f"Característica '{clave}' no válida. "
+            f"Debe ser una de: {', '.join(sorted(CARACTERISTICAS_VALIDAS))}"
+        )
     
     return True, None
 
 
-def validate_status(status: str) -> tuple[bool, Optional[str]]:
-    """
-    Valida estado de suscripción.
-    
-    Args:
-        status: Estado a validar
-        
-    Returns:
-        Tupla (es_válido, mensaje_error)
-    """
-    valid_statuses = [s.value for s in SuscripcionStatus]
-    
-    if status not in valid_statuses:
-        return False, f"Estado inválido. Debe ser uno de: {', '.join(valid_statuses)}"
-    
-    return True, None
-
-
-def validate_date_range(
-    start_date: datetime,
-    end_date: Optional[datetime]
+def validate_cambiar_plan_payload(
+    payload: Union[Dict[str, Any], CambiarPlanRequest]
 ) -> tuple[bool, Optional[str]]:
-    """
-    Valida rango de fechas.
+    """Valida el payload para cambiar de plan.
     
     Args:
-        start_date: Fecha de inicio
-        end_date: Fecha de fin
+        payload: Dict o CambiarPlanRequest con plan_id
         
     Returns:
-        Tupla (es_válido, mensaje_error)
+        Tupla (valido, mensaje_error)
     """
-    if end_date and end_date <= start_date:
-        return False, "La fecha de fin debe ser posterior a la fecha de inicio"
+    if isinstance(payload, BaseModel):
+        # Si ya es un BaseModel validado por Pydantic, confiar en la validación
+        return True, None
+    
+    # Validación para dict (por compatibilidad)
+    data = dict(payload or {})
+    
+    plan_id = data.get("plan_id")
+    
+    if not isinstance(plan_id, int):
+        return False, "plan_id debe ser un entero"
+    
+    if plan_id <= 0:
+        return False, "plan_id debe ser mayor a 0"
     
     return True, None
 
 
-def validate_precio(precio: Optional[float], plan: str) -> tuple[bool, Optional[str]]:
-    """
-    Valida precio según el plan.
-    
-    Args:
-        precio: Precio a validar
-        plan: Tipo de plan
-        
-    Returns:
-        Tupla (es_válido, mensaje_error)
-    """
-    if plan == PlanType.FREEMIUM:
-        if precio is not None and precio > 0:
-            return False, "El plan freemium no debe tener precio"
-    
-    if plan == PlanType.PREMIUM:
-        if precio is None or precio <= 0:
-            return False, "El plan premium debe tener un precio mayor a 0"
-        
-        # Precio razonable (máximo $9999.99)
-        if precio > 9999.99:
-            return False, "El precio no puede exceder $9,999.99"
-    
-    return True, None
-
-
-def validate_metodo_pago(
-    metodo_pago: Optional[str],
-    plan: str
+def validate_cancel_payload(
+    payload: Union[Dict[str, Any], SuscripcionCancelRequest]
 ) -> tuple[bool, Optional[str]]:
-    """
-    Valida método de pago según el plan.
+    """Valida el payload para cancelar suscripción.
+    
+    En v2.3 Freemium solo se usa mode='immediate' (cancelación inmediata).
     
     Args:
-        metodo_pago: Método de pago
-        plan: Tipo de plan
+        payload: Dict o SuscripcionCancelRequest
         
     Returns:
-        Tupla (es_válido, mensaje_error)
+        Tupla (valido, mensaje_error)
     """
-    valid_metodos = ["tarjeta", "paypal", "transferencia", "mercadopago", "stripe"]
+    if isinstance(payload, BaseModel):
+        # Si ya es un BaseModel validado por Pydantic, confiar en la validación
+        data = payload.model_dump()
+    else:
+        data = dict(payload or {})
     
-    if plan == PlanType.PREMIUM and not metodo_pago:
-        return False, "El plan premium requiere un método de pago"
+    mode = data.get("mode")
+    if mode not in {"immediate", "end_of_period"}:
+        return False, "mode debe ser 'immediate' o 'end_of_period'"
     
-    if metodo_pago and metodo_pago.lower() not in valid_metodos:
-        return False, f"Método de pago inválido. Debe ser uno de: {', '.join(valid_metodos)}"
+    reason = data.get("reason")
+    if reason is not None:
+        if not isinstance(reason, str):
+            return False, "reason debe ser un string"
+        if len(reason) > 1000:
+            return False, "reason no puede exceder 1000 caracteres"
     
     return True, None
 
 
-def validate_duracion(duracion_meses: int) -> tuple[bool, Optional[str]]:
-    """
-    Valida duración de suscripción en meses.
+def validate_usuario_id(usuario_id: Any) -> tuple[bool, Optional[str]]:
+    """Valida que usuario_id sea un entero positivo.
     
     Args:
-        duracion_meses: Duración en meses
+        usuario_id: ID del usuario a validar
         
     Returns:
-        Tupla (es_válida, mensaje_error)
+        Tupla (valido, mensaje_error)
     """
-    if duracion_meses < 1:
-        return False, "La duración debe ser al menos 1 mes"
+    if not isinstance(usuario_id, int):
+        return False, "usuario_id debe ser un entero"
     
-    if duracion_meses > 24:
-        return False, "La duración no puede exceder 24 meses"
+    if usuario_id <= 0:
+        return False, "usuario_id debe ser mayor a 0"
     
     return True, None
 
 
-def calculate_end_date(start_date: datetime, duracion_meses: int) -> datetime:
-    """
-    Calcula fecha de fin según duración.
+def validate_plan_id(plan_id: Any) -> tuple[bool, Optional[str]]:
+    """Valida que plan_id sea un entero positivo.
     
     Args:
-        start_date: Fecha de inicio
-        duracion_meses: Duración en meses
+        plan_id: ID del plan a validar
         
     Returns:
-        Fecha de fin calculada
+        Tupla (valido, mensaje_error)
     """
-    # Aproximación: 30 días por mes
-    return start_date + timedelta(days=duracion_meses * 30)
+    if not isinstance(plan_id, int):
+        return False, "plan_id debe ser un entero"
+    
+    if plan_id <= 0:
+        return False, "plan_id debe ser mayor a 0"
+    
+    return True, None
+
+
+__all__ = [
+    "CARACTERISTICAS_VALIDAS",
+    "validate_clave_caracteristica",
+    "validate_cambiar_plan_payload",
+    "validate_cancel_payload",
+    "validate_usuario_id",
+    "validate_plan_id",
+]
+

@@ -1,471 +1,460 @@
 """
-Casos de uso del dominio de suscripciones.
+Casos de uso para suscripciones y sistema de límites Freemium v2.3.
+
+Implementa la lógica de aplicación que coordina servicios y repositorios
+para exponer funcionalidad a las rutas API.
 """
-from datetime import datetime
-from typing import Tuple, List
-from fastapi import HTTPException, status
+from __future__ import annotations
 
-from .repositories import SuscripcionRepository
-from .services import SuscripcionService
+from datetime import datetime, timezone
+from typing import List, Optional, cast
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .models import Caracteristica, UsoCaracteristica
+from .services import LimiteService, SuscripcionService
+from .repositories import PlanesRepository, SuscripcionRepository, CaracteristicaRepository
 from .schemas import (
-    CreateSuscripcionRequest,
-    UpdateSuscripcionRequest,
-    UpgradeToPremiumRequest,
-    CancelSuscripcionRequest,
-    RenewSuscripcionRequest,
-    SuscripcionFilterParams,
-    SuscripcionResponse,
-    SuscripcionStatsResponse
-)
-from src.shared.base_models import PaginationParams
-from .models import PlanType, SuscripcionStatus, Suscripcion
-from .validators import calculate_end_date, validate_precio, validate_metodo_pago
-from .events import (
-    emit_suscripcion_created,
-    emit_suscripcion_upgraded,
-    emit_suscripcion_cancelled,
-    emit_suscripcion_renewed,
-    emit_suscripcion_updated
+    PlanReadSchema,
+    SuscripcionReadSchema,
+    LimiteCheckResponse,
+    LimiteRegistroResponse,
+    CaracteristicaReadSchema,
+    UsoHistorialResponse,
+    FeatureStatusSchema,
 )
 
+import logging
 
-class CreateSuscripcionUseCase:
-    """Caso de uso: Crear una nueva suscripción."""
+logger = logging.getLogger(__name__)
+
+
+def _convert_caracteristica_to_schema(carac: Caracteristica) -> CaracteristicaReadSchema:
+    """Convierte una Caracteristica ORM a CaracteristicaReadSchema.
     
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(self, request: CreateSuscripcionRequest) -> SuscripcionResponse:
+    Helper function para evitar warnings de tipo en comprehensions.
+    """
+    return CaracteristicaReadSchema(
+        id=carac.id,
+        clave_funcion=carac.clave_funcion,
+        descripcion=carac.descripcion,
+        limite_free=carac.limite_free,
+        limite_pro=carac.limite_pro,
+    )
+
+
+class ListPlanesUseCase:
+    """Lista todos los planes disponibles."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.planes_repo = PlanesRepository(session)
+
+    async def execute(self) -> List[PlanReadSchema]:
+        """Retorna lista de planes con sus características.
+        
+        Returns:
+            Lista de PlanReadSchema con información completa
         """
-        Crea una nueva suscripción.
+        logger.debug("ListPlanesUseCase.execute")
+        
+        planes = await self.planes_repo.list_planes()
+        
+        result: List[PlanReadSchema] = []
+        for plan in planes:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            
+            # SQLAlchemy relationships no tienen type hints completos
+            for c in (plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_schema = PlanReadSchema(
+                id=plan.id,
+                nombre_plan=plan.nombre_plan,
+                precio=plan.precio,
+                periodo_facturacion=plan.periodo_facturacion.value if plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
+            )
+            result.append(plan_schema)
+        
+        return result
+
+
+class GetMySuscripcionUseCase:
+    """Obtiene la suscripción actual del usuario."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.suscripcion_repo = SuscripcionRepository(session)
+        self.caracteristica_repo = CaracteristicaRepository(session)
+        self.limite_service = LimiteService(session)
+
+    async def execute(self, usuario_id: int) -> Optional[SuscripcionReadSchema]:
+        """Retorna la suscripción activa del usuario con estado de características.
         
         Args:
-            request: Datos de la suscripción
+            usuario_id: ID del usuario
             
         Returns:
-            Suscripción creada
-            
-        Raises:
-            HTTPException: Si hay errores de validación
+            SuscripcionReadSchema o None si no tiene suscripción
         """
-        # Verificar que el usuario no tenga una suscripción activa
-        existing = await self.repository.get_active_by_usuario(request.usuario_id)
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El usuario ya tiene una suscripción activa"
-            )
+        logger.debug("GetMySuscripcionUseCase.execute: usuario_id=%s", usuario_id)
         
-        # Validar precio según plan
-        is_valid, error_msg = validate_precio(request.precio, request.plan)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
+        suscripcion = await self.suscripcion_repo.get_by_usuario_id(usuario_id)
         
-        # Validar método de pago según plan
-        is_valid, error_msg = validate_metodo_pago(request.metodo_pago, request.plan)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
+        if not suscripcion:
+            return None
         
-        # Verificar transaction_id único (si se proporciona)
-        if request.transaction_id:
-            if await self.repository.transaction_exists(request.transaction_id):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="El ID de transacción ya existe"
+        # Eager loading ya debería estar hecho en el repo
+        plan_data = None
+        if suscripcion.plan:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            for c in (suscripcion.plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_data = PlanReadSchema(
+                id=suscripcion.plan.id,
+                nombre_plan=suscripcion.plan.nombre_plan,
+                precio=suscripcion.plan.precio,
+                periodo_facturacion=suscripcion.plan.periodo_facturacion.value if suscripcion.plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
+            )
+
+        # --- Lógica de Estado de Características (Merged) ---
+        caracteristicas_all = await self.caracteristica_repo.get_all()
+        features_status: List[FeatureStatusSchema] = []
+        
+        es_pro = suscripcion.plan.nombre_plan.lower() != "free" if suscripcion.plan else False
+        
+        for carac in caracteristicas_all:
+            # Obtener uso actual
+            estado_limite = await self.limite_service.check_limite(usuario_id, carac.clave_funcion)
+            
+            uso_actual = estado_limite["usos_realizados"]
+            limite_actual = estado_limite["limite"]
+            limite_pro = carac.limite_pro
+            
+            # Generar mensaje de upsell
+            upsell_msg = None
+            if not es_pro:
+                is_upgrade = False
+                if carac.limite_free is not None:
+                    if limite_pro is None:
+                        is_upgrade = True
+                    elif limite_pro > carac.limite_free:
+                        is_upgrade = True
+                
+                if is_upgrade:
+                    if limite_pro is None:
+                        upsell_msg = "Mejora a Pro para uso ilimitado"
+                    else:
+                        upsell_msg = f"Mejora a Pro para obtener {limite_pro} usos"
+
+            features_status.append(FeatureStatusSchema(
+                caracteristica=carac.clave_funcion,
+                descripcion=carac.descripcion,
+                uso_actual=uso_actual,
+                limite_actual=limite_actual,
+                limite_pro=limite_pro,
+                upsell_message=upsell_msg
+            ))
+        
+        return SuscripcionReadSchema(
+            id=suscripcion.id,
+            usuario_id=suscripcion.usuario_id,
+            plan=plan_data,
+            fecha_inicio=suscripcion.fecha_inicio,
+            fecha_fin=suscripcion.fecha_fin,
+            estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
+            features_status=features_status,
+        )
+
+
+class CheckLimiteUseCase:
+    """Verifica si el usuario puede usar una característica."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.limite_service = LimiteService(session)
+
+    async def execute(
+        self, 
+        usuario_id: int, 
+        clave_caracteristica: str
+    ) -> LimiteCheckResponse:
+        """Verifica límite de una característica.
+        
+        Args:
+            usuario_id: ID del usuario
+            clave_caracteristica: Clave de la característica (ej: 'CHATBOT', 'ML_PREDICTIONS')
+            
+        Returns:
+            LimiteCheckResponse con estado del límite
+        """
+        logger.debug(
+            "CheckLimiteUseCase.execute: usuario_id=%s caracteristica=%s",
+            usuario_id, clave_caracteristica
+        )
+        
+        result = await self.limite_service.check_limite(usuario_id, clave_caracteristica)
+        
+        return LimiteCheckResponse(
+            puede_usar=result["puede_usar"],
+            usos_realizados=result["usos_realizados"],
+            limite=result["limite"],
+            usos_restantes=result.get("usos_restantes"),
+            mensaje=result["mensaje"],
+            periodo_actual=result["periodo_actual"],
+        )
+
+
+class RegistrarUsoUseCase:
+    """Registra el uso de una característica."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.limite_service = LimiteService(session)
+
+    async def execute(
+        self, 
+        usuario_id: int, 
+        clave_caracteristica: str
+    ) -> LimiteRegistroResponse:
+        """Registra un uso y actualiza el contador.
+        
+        Args:
+            usuario_id: ID del usuario
+            clave_caracteristica: Clave de la característica
+            
+        Returns:
+            LimiteRegistroResponse con resultado del registro
+        """
+        logger.debug(
+            "RegistrarUsoUseCase.execute: usuario_id=%s caracteristica=%s",
+            usuario_id, clave_caracteristica
+        )
+        
+        result = await self.limite_service.registrar_uso(usuario_id, clave_caracteristica)
+        
+        return LimiteRegistroResponse(
+            exito=result["exito"],
+            usos_realizados=result["usos_realizados"],
+            limite=result["limite"],
+            usos_restantes=result.get("usos_restantes"),
+            mensaje=result["mensaje"],
+        )
+
+
+class GetHistorialUsoUseCase:
+    """Obtiene el historial de uso de características del usuario."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def execute(self, usuario_id: int) -> List[UsoHistorialResponse]:
+        """Retorna historial de uso del mes actual.
+        
+        Args:
+            usuario_id: ID del usuario
+            
+        Returns:
+            Lista de UsoHistorialResponse con uso por característica
+        """
+        logger.debug("GetHistorialUsoUseCase.execute: usuario_id=%s", usuario_id)
+        
+        from sqlalchemy import select, and_
+        from datetime import date
+        
+        periodo_actual = date.today().replace(day=1)
+        
+        # Consultar uso del mes actual
+        stmt = (
+            select(UsoCaracteristica)
+            .where(
+                and_(
+                    UsoCaracteristica.usuario_id == usuario_id,
+                    UsoCaracteristica.periodo_mes == periodo_actual,
+                    UsoCaracteristica.deleted_at.is_(None)
                 )
-        
-        # Preparar datos
-        suscripcion_data = self.service.prepare_suscripcion_data(
-            usuario_id=request.usuario_id,
-            plan=request.plan,
-            duracion_meses=request.duracion_meses,
-            precio=request.precio,
-            metodo_pago=request.metodo_pago,
-            transaction_id=request.transaction_id,
-            auto_renovacion=request.auto_renovacion,
-            notas=request.notas
+            )
         )
         
-        # Crear suscripción
-        suscripcion = await self.repository.create(suscripcion_data)
+        result = await self.session.execute(stmt)
+        usos = result.scalars().all()
         
-        # Emitir evento
-        await emit_suscripcion_created(
-            suscripcion_id=suscripcion.id,
-            usuario_id=str(suscripcion.usuario_id),  # Convertir a string para evento
-            plan=suscripcion.plan,
-            precio=float(suscripcion.precio) if suscripcion.precio else None
+        # Obtener características con eager loading
+        if not usos:
+            return []
+        
+        # Cargar características
+        caracteristica_ids = [uso.caracteristica_id for uso in usos]
+        stmt_carac = select(Caracteristica).where(
+            Caracteristica.id.in_(caracteristica_ids)
         )
+        result_carac = await self.session.execute(stmt_carac)
+        caracteristicas = {c.id: c for c in result_carac.scalars().all()}
         
-        # Retornar respuesta
-        suscripcion_dict = self.service.build_suscripcion_response(suscripcion)
-        return SuscripcionResponse(**suscripcion_dict)
+        return [
+            UsoHistorialResponse(
+                caracteristica=caracteristicas[uso.caracteristica_id].clave_funcion,
+                usos_realizados=uso.usos_realizados,
+                limite_mensual=uso.limite_mensual,
+                ultimo_uso_at=uso.ultimo_uso_at,
+                periodo_mes=uso.periodo_mes,
+            )
+            for uso in usos
+            if uso.caracteristica_id in caracteristicas
+        ]
 
 
-class GetSuscripcionUseCase:
-    """Caso de uso: Obtener una suscripción por ID."""
-    
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
+class CambiarPlanUseCase:
+    """Cambia el plan de un usuario (genérico para cualquier plan)."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.suscripcion_service = SuscripcionService(session)
+        self.planes_repo = PlanesRepository(session)
+
     async def execute(
-        self,
-        suscripcion_id: int,
-        usuario_id: int,  # INTEGER
-        is_admin: bool = False
-    ) -> SuscripcionResponse:
-        """
-        Obtiene una suscripción por ID.
-        
-        Args:
-            suscripcion_id: ID de la suscripción
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Suscripción encontrada
-            
-        Raises:
-            HTTPException: Si no se encuentra o no tiene permiso
-        """
-        suscripcion = await self.repository.get_by_id(suscripcion_id)
-        
-        if not suscripcion:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Suscripción no encontrada"
-            )
-        
-        # Verificar ownership (admins pueden ver todas)
-        if not is_admin and suscripcion.usuario_id != usuario_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permiso para ver esta suscripción"
-            )
-        
-        suscripcion_dict = self.service.build_suscripcion_response(suscripcion)
-        return SuscripcionResponse(**suscripcion_dict)
-
-
-class GetActiveSuscripcionUseCase:
-    """Caso de uso: Obtener suscripción activa del usuario."""
-    
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(self, usuario_id: int) -> SuscripcionResponse:  # INTEGER
-        """
-        Obtiene la suscripción activa del usuario.
+        self, 
+        usuario_id: int, 
+        nuevo_plan_id: int
+    ) -> SuscripcionReadSchema:
+        """Cambia el plan del usuario.
         
         Args:
             usuario_id: ID del usuario
+            nuevo_plan_id: ID del plan destino
             
         Returns:
-            Suscripción activa
+            SuscripcionReadSchema actualizada
             
         Raises:
-            HTTPException: Si no tiene suscripción activa
+            ValueError: Si el plan no existe o el usuario ya lo tiene
         """
-        suscripcion = await self.repository.get_active_by_usuario(usuario_id)
-        
-        if not suscripcion:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No tienes una suscripción activa"
-            )
-        
-        suscripcion_dict = self.service.build_suscripcion_response(suscripcion)
-        return SuscripcionResponse(**suscripcion_dict)
-
-
-class ListSuscripcionesUseCase:
-    """Caso de uso: Listar suscripciones con filtros."""
-    
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        filters: SuscripcionFilterParams,
-        pagination: PaginationParams,
-        usuario_id: int,  # INTEGER
-        is_admin: bool = False
-    ) -> Tuple[List[Suscripcion], int]:
-        """
-        Lista suscripciones con filtros y paginación.
-        
-        Args:
-            filters: Filtros de búsqueda
-            pagination: Parámetros de paginación
-            usuario_id: ID del usuario solicitante
-            is_admin: Si el usuario es admin
-            
-        Returns:
-            Tupla con lista de suscripciones y total
-        """
-        # Si no es admin, solo puede ver sus suscripciones
-        usuario_filter = filters.usuario_id if is_admin else usuario_id
-        
-        # Obtener suscripciones
-        suscripciones = await self.repository.list_suscripciones(
-            usuario_id=usuario_filter,
-            plan=filters.plan,
-            status=filters.status,
-            activas_only=filters.activas_only,
-            skip=pagination.offset,
-            limit=pagination.limit,
-            order_by=filters.order_by,
-            order_direction=filters.order_direction
+        logger.info(
+            "CambiarPlanUseCase.execute: usuario_id=%s nuevo_plan_id=%s",
+            usuario_id, nuevo_plan_id
         )
         
-        # Contar total
-        total = await self.repository.count_suscripciones(
-            usuario_id=usuario_filter,
-            plan=filters.plan,
-            status=filters.status,
-            activas_only=filters.activas_only
+        # Usar el servicio genérico
+        suscripcion = await self.suscripcion_service.cambiar_plan(
+            usuario_id, nuevo_plan_id
         )
         
-        return suscripciones, total
-
-
-class UpgradeToPremiumUseCase:
-    """Caso de uso: Upgrade de freemium a premium."""
-    
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        usuario_id: int,  # INTEGER
-        request: UpgradeToPremiumRequest
-    ) -> SuscripcionResponse:
-        """
-        Realiza upgrade a premium.
+        # Cargar plan con eager loading
+        plan = await self.planes_repo.get_plan_by_id(suscripcion.plan_id)
         
-        Args:
-            usuario_id: ID del usuario
-            request: Datos del upgrade
+        plan_data = None
+        if plan:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            for c in (plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
             
-        Returns:
-            Suscripción actualizada
-            
-        Raises:
-            HTTPException: Si hay errores
-        """
-        # Obtener suscripción activa
-        suscripcion = await self.repository.get_active_by_usuario(usuario_id)
-        
-        if not suscripcion:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No tienes una suscripción activa"
+            plan_data = PlanReadSchema(
+                id=plan.id,
+                nombre_plan=plan.nombre_plan,
+                precio=plan.precio,
+                periodo_facturacion=plan.periodo_facturacion.value if plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
             )
         
-        # Verificar si puede hacer upgrade
-        can_upgrade, error_msg = self.service.can_upgrade(suscripcion)
-        if not can_upgrade:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-        
-        # Verificar transaction_id único
-        if await self.repository.transaction_exists(request.transaction_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El ID de transacción ya existe"
-            )
-        
-        # Calcular nueva fecha de fin
-        new_end_date = calculate_end_date(datetime.utcnow(), request.duracion_meses)
-        
-        # Actualizar suscripción
-        old_plan = suscripcion.plan
-        update_data = {
-            "plan": PlanType.PREMIUM,
-            "end_date": new_end_date,
-            "precio": request.precio,
-            "metodo_pago": request.metodo_pago.lower(),
-            "transaction_id": request.transaction_id,
-            "auto_renovacion": request.auto_renovacion
-        }
-        
-        updated_suscripcion = await self.repository.update(suscripcion, update_data)
-        
-        # Emitir evento
-        await emit_suscripcion_upgraded(
-            suscripcion_id=updated_suscripcion.id,
-            usuario_id=str(usuario_id),  # Convertir a string para evento
-            old_plan=old_plan,
-            new_plan=PlanType.PREMIUM,
-            precio=request.precio,
-            duracion_meses=request.duracion_meses
+        return SuscripcionReadSchema(
+            id=suscripcion.id,
+            usuario_id=suscripcion.usuario_id,
+            plan=plan_data,
+            fecha_inicio=suscripcion.fecha_inicio,
+            fecha_fin=suscripcion.fecha_fin,
+            estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
         )
-        
-        suscripcion_dict = self.service.build_suscripcion_response(updated_suscripcion)
-        return SuscripcionResponse(**suscripcion_dict)
 
 
 class CancelSuscripcionUseCase:
-    """Caso de uso: Cancelar suscripción."""
-    
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        usuario_id: int,  # INTEGER
-        request: CancelSuscripcionRequest
-    ) -> None:
-        """
-        Cancela la suscripción activa.
+    """Cancela la suscripción activa del usuario."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.suscripcion_repo = SuscripcionRepository(session)
+
+    async def execute(self, usuario_id: int) -> SuscripcionReadSchema:
+        """Cancela la suscripción y la pasa a plan Free.
         
         Args:
             usuario_id: ID del usuario
-            request: Datos de cancelación
+            
+        Returns:
+            SuscripcionReadSchema actualizada
             
         Raises:
-            HTTPException: Si hay errores
+            ValueError: Si no tiene suscripción activa
         """
-        # Obtener suscripción activa
-        suscripcion = await self.repository.get_active_by_usuario(usuario_id)
+        logger.info("CancelSuscripcionUseCase.execute: usuario_id=%s", usuario_id)
+        
+        from .models import EstadoSuscripcion
+        from .repositories import PlanesRepository
+        
+        # Obtener suscripción actual
+        suscripcion = await self.suscripcion_repo.get_by_usuario_id(usuario_id)
         
         if not suscripcion:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No tienes una suscripción activa"
+            raise ValueError("Usuario no tiene suscripción activa")
+        
+        if suscripcion.estado_suscripcion == EstadoSuscripcion.CANCELADA:
+            raise ValueError("La suscripción ya está cancelada")
+        
+        # Buscar plan Free
+        planes_repo = PlanesRepository(self.session)
+        plan_free = await planes_repo.get_plan_by_nombre("FREE")
+        
+        if not plan_free:
+            raise ValueError("Plan Free no encontrado")
+        
+        # Actualizar a Free y marcar como cancelada
+        suscripcion.plan_id = plan_free.id
+        suscripcion.estado_suscripcion = EstadoSuscripcion.CANCELADA
+        suscripcion.fecha_fin = datetime.now(timezone.utc)
+        
+        await self.session.commit()
+        await self.session.refresh(suscripcion)
+        
+        logger.info("CancelSuscripcionUseCase: Suscripción cancelada usuario_id=%s", usuario_id)
+        
+        # Cargar plan con eager loading
+        plan = await planes_repo.get_plan_by_id(suscripcion.plan_id)
+        
+        plan_data = None
+        if plan:
+            caracteristicas_list: List[CaracteristicaReadSchema] = []
+            for c in (plan.caracteristicas or []):  # type: ignore
+                carac = _convert_caracteristica_to_schema(cast(Caracteristica, c))
+                caracteristicas_list.append(carac)
+            
+            plan_data = PlanReadSchema(
+                id=plan.id,
+                nombre_plan=plan.nombre_plan,
+                precio=plan.precio,
+                periodo_facturacion=plan.periodo_facturacion.value if plan.periodo_facturacion else None,
+                caracteristicas=caracteristicas_list,
             )
         
-        # Verificar si puede cancelar
-        can_cancel, error_msg = self.service.can_cancel(suscripcion)
-        if not can_cancel:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-        
-        # Cancelar
-        update_data = {
-            "status": SuscripcionStatus.CANCELLED,
-            "cancelled_at": datetime.utcnow(),
-            "notas": request.razon if request.razon else suscripcion.notas
-        }
-        
-        await self.repository.update(suscripcion, update_data)
-        
-        # Emitir evento
-        await emit_suscripcion_cancelled(
-            suscripcion_id=suscripcion.id,
-            usuario_id=str(usuario_id),  # Convertir a string para evento
-            plan=suscripcion.plan,
-            cancelled_by=str(usuario_id),  # Convertir a string para evento
-            razon=request.razon
+        return SuscripcionReadSchema(
+            id=suscripcion.id,
+            usuario_id=suscripcion.usuario_id,
+            plan=plan_data,
+            fecha_inicio=suscripcion.fecha_inicio,
+            fecha_fin=suscripcion.fecha_fin,
+            estado_suscripcion=suscripcion.estado_suscripcion.value if suscripcion.estado_suscripcion else None,
         )
 
 
-class RenewSuscripcionUseCase:
-    """Caso de uso: Renovar suscripción premium."""
-    
-    def __init__(self, repository: SuscripcionRepository, service: SuscripcionService):
-        self.repository = repository
-        self.service = service
-    
-    async def execute(
-        self,
-        usuario_id: int,  # INTEGER
-        request: RenewSuscripcionRequest
-    ) -> SuscripcionResponse:
-        """
-        Renueva suscripción premium.
-        
-        Args:
-            usuario_id: ID del usuario
-            request: Datos de renovación
-            
-        Returns:
-            Suscripción renovada
-            
-        Raises:
-            HTTPException: Si hay errores
-        """
-        # Obtener suscripción activa
-        suscripcion = await self.repository.get_active_by_usuario(usuario_id)
-        
-        if not suscripcion:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No tienes una suscripción activa"
-            )
-        
-        # Verificar si puede renovar
-        can_renew, error_msg = self.service.can_renew(suscripcion)
-        if not can_renew:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-        
-        # Verificar transaction_id único
-        if await self.repository.transaction_exists(request.transaction_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El ID de transacción ya existe"
-            )
-        
-        # Calcular nueva fecha de fin (desde la actual o desde ahora)
-        if suscripcion.end_date and suscripcion.end_date > datetime.utcnow():
-            base_date = suscripcion.end_date
-        else:
-            base_date = datetime.utcnow()
-        new_end_date = calculate_end_date(base_date, request.duracion_meses)
-        
-        # Renovar
-        update_data = {
-            "end_date": new_end_date,
-            "status": SuscripcionStatus.ACTIVE,
-            "transaction_id": request.transaction_id
-        }
-        
-        updated_suscripcion = await self.repository.update(suscripcion, update_data)
-        
-        # Emitir evento
-        await emit_suscripcion_renewed(
-            suscripcion_id=updated_suscripcion.id,
-            usuario_id=str(usuario_id),  # Convertir a string para evento
-            plan=suscripcion.plan,
-            new_end_date=new_end_date,
-            precio=request.precio
-        )
-        
-        suscripcion_dict = self.service.build_suscripcion_response(updated_suscripcion)
-        return SuscripcionResponse(**suscripcion_dict)
-
-
-class GetSuscripcionStatsUseCase:
-    """Caso de uso: Obtener estadísticas de suscripciones."""
-    
-    def __init__(self, repository: SuscripcionRepository):
-        self.repository = repository
-    
-    async def execute(self) -> SuscripcionStatsResponse:
-        """
-        Obtiene estadísticas de suscripciones.
-        
-        Returns:
-            Estadísticas de suscripciones
-        """
-        stats = await self.repository.get_stats()
-        return SuscripcionStatsResponse(**stats)
+__all__ = [
+    "ListPlanesUseCase",
+    "GetMySuscripcionUseCase",
+    "CheckLimiteUseCase",
+    "RegistrarUsoUseCase",
+    "GetHistorialUsoUseCase",
+    "CambiarPlanUseCase",
+    "CancelSuscripcionUseCase",
+]

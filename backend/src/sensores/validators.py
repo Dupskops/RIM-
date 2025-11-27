@@ -1,226 +1,470 @@
 """
-Validadores de negocio para sensores.
+Validadores para el módulo de sensores.
+
+Funciones de validación reutilizables para:
+- Existencia de entidades relacionadas (motos, templates, componentes)
+- Esquemas JSONB (config, valor)
+- Valores en rango de umbrales
+- Ownership y permisos
+
+Incluye logging detallado para debugging y auditoría.
 """
-from typing import Tuple
-from datetime import datetime
+import logging
+from typing import Optional, Dict, Any
+from uuid import UUID
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..shared.constants import TipoSensor, SENSOR_RANGES
+from .models import SensorTemplate, Sensor
+from ..motos.models import Moto, Componente
+from ..shared.exceptions import NotFoundError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 
-def validate_tipo_sensor(tipo: str) -> Tuple[bool, str]:
+# ============================================
+# VALIDADORES DE EXISTENCIA
+# ============================================
+
+async def validate_moto_exists(session: AsyncSession, moto_id: int) -> Moto:
     """
-    Valida que el tipo de sensor sea válido.
+    Validar que una moto existe.
     
     Args:
-        tipo: Tipo de sensor
+        session: Sesión de base de datos
+        moto_id: ID de la moto (int PK según DDL v2.3)
         
     Returns:
-        (es_valido, mensaje_error)
+        Moto encontrada
+        
+    Raises:
+        NotFoundError: Si la moto no existe
     """
     try:
-        TipoSensor(tipo)
-        return True, ""
-    except ValueError:
-        valid_types = [t.value for t in TipoSensor]
-        return False, f"Tipo de sensor inválido. Tipos válidos: {', '.join(valid_types)}"
+        result = await session.execute(
+            select(Moto).where(Moto.id == moto_id)  # CORREGIDO: Moto.id, no moto_id
+        )
+        moto = result.scalar_one_or_none()
+
+        if not moto:
+            logger.warning(f"Moto {moto_id} no encontrada")
+            raise NotFoundError(f"Moto con ID {moto_id} no encontrada")
+
+        logger.debug(f"Moto {moto_id} validada")
+        return moto
+
+    except NotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando existencia de moto {moto_id}: {e}")
+        raise ValidationError(f"Error al validar moto: {str(e)}")
 
 
-def validate_codigo_sensor(codigo: str) -> Tuple[bool, str]:
+async def validate_template_exists(session: AsyncSession, template_id: UUID) -> SensorTemplate:
     """
-    Valida el código del sensor.
+    Validar que una plantilla de sensor existe.
     
     Args:
-        codigo: Código del sensor
+        session: Sesión de base de datos
+        template_id: ID de la plantilla
         
     Returns:
-        (es_valido, mensaje_error)
-    """
-    if not codigo or len(codigo) < 3:
-        return False, "El código del sensor debe tener al menos 3 caracteres"
-    
-    if len(codigo) > 50:
-        return False, "El código del sensor no puede exceder 50 caracteres"
-    
-    # Solo permitir alfanuméricos, guiones y guiones bajos
-    if not all(c.isalnum() or c in ['-', '_'] for c in codigo):
-        return False, "El código solo puede contener letras, números, guiones y guiones bajos"
-    
-    return True, ""
-
-
-def validate_frecuencia_lectura(frecuencia: int) -> Tuple[bool, str]:
-    """
-    Valida la frecuencia de lectura del sensor.
-    
-    Args:
-        frecuencia: Frecuencia en segundos
+        Plantilla encontrada
         
-    Returns:
-        (es_valido, mensaje_error)
+    Raises:
+        NotFoundError: Si la plantilla no existe
     """
-    if frecuencia < 1:
-        return False, "La frecuencia de lectura debe ser al menos 1 segundo"
-    
-    if frecuencia > 3600:
-        return False, "La frecuencia de lectura no puede exceder 1 hora (3600 segundos)"
-    
-    return True, ""
-
-
-def validate_umbrales(
-    tipo_sensor: str,
-    umbral_min: float | None = None,
-    umbral_max: float | None = None
-) -> Tuple[bool, str]:
-    """
-    Valida los umbrales del sensor según el tipo.
-    
-    Args:
-        tipo_sensor: Tipo de sensor
-        umbral_min: Umbral mínimo
-        umbral_max: Umbral máximo
-        
-    Returns:
-        (es_valido, mensaje_error)
-    """
-    if umbral_min is not None and umbral_max is not None:
-        if umbral_min >= umbral_max:
-            return False, "El umbral mínimo debe ser menor que el máximo"
-    
-    # Validar contra rangos conocidos
     try:
-        tipo_enum = TipoSensor(tipo_sensor)
-        if tipo_enum in SENSOR_RANGES:
-            sensor_range = SENSOR_RANGES[tipo_enum]
-            range_min = sensor_range["min"]
-            range_max = sensor_range["max"]
+        result = await session.execute(
+            select(SensorTemplate).where(SensorTemplate.id == template_id)
+        )
+        template = result.scalar_one_or_none()
+        
+        if not template:
+            logger.warning(f"Template {template_id} no encontrado")
+            raise NotFoundError(f"Template con ID {template_id} no encontrado")
+        
+        logger.debug(f"Template {template_id} validado: {template.name}")
+        return template
+        
+    except NotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando existencia de template {template_id}: {e}")
+        raise ValidationError(f"Error al validar template: {str(e)}")
+
+
+async def validate_componente_exists(session: AsyncSession, componente_id: int) -> Componente:
+    """
+    Validar que un componente existe.
+    
+    Args:
+        session: Sesión de base de datos
+        componente_id: ID del componente (int PK según DDL v2.3)
+        
+    Returns:
+        Componente encontrado
+        
+    Raises:
+        NotFoundError: Si el componente no existe
+    """
+    try:
+        result = await session.execute(
+            select(Componente).where(Componente.id == componente_id)  # CORREGIDO: Componente.id, no componente_id
+        )
+        componente = result.scalar_one_or_none()
+
+        if not componente:
+            logger.warning(f"Componente {componente_id} no encontrado")
+            raise NotFoundError(f"Componente con ID {componente_id} no encontrado")
+
+        logger.debug(f"Componente {componente_id} validado: {componente.nombre}")
+        return componente
+
+    except NotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando existencia de componente {componente_id}: {e}")
+        raise ValidationError(f"Error al validar componente: {str(e)}")
+
+
+async def validate_sensor_exists(session: AsyncSession, sensor_id: UUID) -> Sensor:
+    """
+    Validar que un sensor existe.
+    
+    Args:
+        session: Sesión de base de datos
+        sensor_id: ID del sensor
+        
+    Returns:
+        Sensor encontrado
+        
+    Raises:
+        NotFoundError: Si el sensor no existe
+    """
+    try:
+        result = await session.execute(
+            select(Sensor).where(Sensor.id == sensor_id)
+        )
+        sensor = result.scalar_one_or_none()
+        
+        if not sensor:
+            logger.warning(f"Sensor {sensor_id} no encontrado")
+            raise NotFoundError(f"Sensor con ID {sensor_id} no encontrado")
+        
+        logger.debug(f"Sensor {sensor_id} validado: {sensor.tipo}")
+        return sensor
+        
+    except NotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando existencia de sensor {sensor_id}: {e}")
+        raise ValidationError(f"Error al validar sensor: {str(e)}")
+
+
+# ============================================
+# VALIDADORES DE OWNERSHIP
+# ============================================
+
+async def validate_sensor_belongs_to_moto(
+    session: AsyncSession,
+    sensor_id: UUID,
+    moto_id: int
+) -> bool:
+    """
+    Validar que un sensor pertenece a una moto específica.
+    
+    Args:
+        session: Sesión de base de datos
+        sensor_id: ID del sensor
+        moto_id: ID de la moto
+        
+    Returns:
+        True si el sensor pertenece a la moto
+        
+    Raises:
+        ValidationError: Si el sensor no pertenece a la moto
+    """
+    try:
+        sensor = await validate_sensor_exists(session, sensor_id)
+        
+        if sensor.moto_id != moto_id:
+            logger.warning(
+                f"Sensor {sensor_id} no pertenece a moto {moto_id} "
+                f"(pertenece a moto {sensor.moto_id})"
+            )
+            raise ValidationError(
+                f"Sensor {sensor_id} no pertenece a la moto especificada"
+            )
+        
+        logger.debug(f"Sensor {sensor_id} validado como perteneciente a moto {moto_id}")
+        return True
+        
+    except (NotFoundError, ValidationError):
+        raise
+    except Exception as e:
+        logger.error(f"Error validando ownership de sensor {sensor_id}: {e}")
+        raise ValidationError(f"Error al validar ownership: {str(e)}")
+
+
+async def validate_componente_belongs_to_moto(
+    session: AsyncSession,
+    componente_id: int,  # CORREGIDO: int, no UUID (según DDL v2.3)
+    moto_id: int
+) -> bool:
+    """
+    Validar que un componente pertenece a una moto específica.
+    
+    NOTA: Componentes son definiciones por modelo (no por moto individual).
+    Esta validación verifica que el componente exista y pertenezca al modelo
+    de la moto especificada.
+    
+    Args:
+        session: Sesión de base de datos
+        componente_id: ID del componente (int)
+        moto_id: ID de la moto (int)
+        
+    Returns:
+        True si el componente es válido para el modelo de la moto
+        
+    Raises:
+        ValidationError: Si el componente no es válido para la moto
+    """
+    try:
+        componente = await validate_componente_exists(session, componente_id)
+        
+        # Validar que el componente pertenece al modelo de la moto
+        moto = await validate_moto_exists(session, moto_id)
+        
+        if componente.modelo_moto_id != moto.modelo_moto_id:
+            logger.warning(
+                f"Componente {componente_id} no pertenece al modelo de moto {moto_id} "
+                f"(componente.modelo_moto_id={componente.modelo_moto_id}, moto.modelo_moto_id={moto.modelo_moto_id})"
+            )
+            raise ValidationError(
+                f"Componente {componente_id} no pertenece al modelo de la moto especificada"
+            )
+        
+        logger.debug(f"Componente {componente_id} validado para moto {moto_id}")
+        return True
+        
+    except (NotFoundError, ValidationError):
+        raise
+    except Exception as e:
+        logger.error(f"Error validando ownership de componente {componente_id}: {e}")
+        raise ValidationError(f"Error al validar ownership: {str(e)}")
+
+
+# ============================================
+# VALIDADORES DE ESQUEMAS JSONB
+# ============================================
+
+def validate_config_schema(config: Dict[str, Any]) -> bool:
+    """
+    Validar esquema básico de config JSONB.
+    
+    Campos opcionales comunes:
+    - thresholds: {min: float, max: float}
+    - calibration_offset: float
+    - enabled: bool
+    - frequency_ms: int
+    
+    Args:
+        config: Diccionario de configuración
+        
+    Returns:
+        True si el esquema es válido
+        
+    Raises:
+        ValidationError: Si el esquema es inválido
+    """
+    try:
+        if not isinstance(config, dict):  # type: ignore[arg-type]
+            raise ValidationError("Config debe ser un diccionario")
+        
+        # Validar thresholds si existen
+        if "thresholds" in config:
+            thresholds = config["thresholds"]
+            if not isinstance(thresholds, dict):
+                raise ValidationError("thresholds debe ser un diccionario")
             
-            if umbral_min is not None and umbral_min < range_min:
-                return False, f"Umbral mínimo fuera del rango válido ({range_min}-{range_max})"
-            
-            if umbral_max is not None and umbral_max > range_max:
-                return False, f"Umbral máximo fuera del rango válido ({range_min}-{range_max})"
-    except ValueError:
-        pass  # Tipo no válido, ya se validó antes
-    
-    return True, ""
+            if "min" in thresholds and "max" in thresholds:
+                # Extraer y validar tipos
+                min_raw = thresholds["min"]
+                max_raw = thresholds["max"]
+                
+                if not isinstance(min_raw, (int, float)) or not isinstance(max_raw, (int, float)):
+                    raise ValidationError("thresholds min/max deben ser números")
+                
+                min_val: float = float(min_raw)
+                max_val: float = float(max_raw)
+                
+                if min_val >= max_val:
+                    raise ValidationError("threshold min debe ser menor que max")
+                    
+                logger.debug(f"Thresholds validados: min={min_val}, max={max_val}")
+        
+        # Validar calibration_offset si existe
+        if "calibration_offset" in config:
+            offset = config["calibration_offset"]
+            if not isinstance(offset, (int, float)):
+                raise ValidationError("calibration_offset debe ser un número")
+        
+        # Validar enabled si existe
+        if "enabled" in config:
+            if not isinstance(config["enabled"], bool):
+                raise ValidationError("enabled debe ser un booleano")
+        
+        # Validar frequency_ms si existe
+        if "frequency_ms" in config:
+            freq = config["frequency_ms"]
+            if not isinstance(freq, int) or freq <= 0:
+                raise ValidationError("frequency_ms debe ser un entero positivo")
+        
+        logger.debug("Config schema validado correctamente")
+        return True
+        
+    except ValidationError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando config schema: {e}")
+        raise ValidationError(f"Error al validar config: {str(e)}")
 
 
-def validate_valor_sensor(tipo_sensor: str, valor: float) -> Tuple[bool, str]:
+def validate_valor_schema(valor: Dict[str, Any]) -> bool:
     """
-    Valida que el valor del sensor esté en un rango razonable.
+    Validar esquema básico de valor JSONB.
+    
+    Campos requeridos:
+    - value: number (el valor de la lectura)
+    - unit: string (unidad de medida)
+    
+    Campos opcionales:
+    - raw: number (valor crudo sin procesar)
     
     Args:
-        tipo_sensor: Tipo de sensor
-        valor: Valor leído
+        valor: Diccionario con el valor de la lectura
         
     Returns:
-        (es_valido, mensaje_error)
-    """
-    # Validaciones básicas
-    if valor is None:
-        return False, "El valor no puede ser nulo"
-    
-    # Validar contra rangos físicamente posibles (más amplios que los normales)
-    if tipo_sensor == TipoSensor.TEMPERATURA_MOTOR.value:
-        if valor < -50 or valor > 200:
-            return False, "Temperatura del motor fuera del rango físicamente posible (-50°C a 200°C)"
-    
-    elif tipo_sensor == TipoSensor.TEMPERATURA_ACEITE.value:
-        if valor < -50 or valor > 250:
-            return False, "Temperatura del aceite fuera del rango físicamente posible (-50°C a 250°C)"
-    
-    elif tipo_sensor == TipoSensor.PRESION_ACEITE.value:
-        if valor < 0 or valor > 10:
-            return False, "Presión de aceite fuera del rango físicamente posible (0-10 bar)"
-    
-    elif tipo_sensor == TipoSensor.VOLTAJE_BATERIA.value:
-        if valor < 0 or valor > 20:
-            return False, "Voltaje de batería fuera del rango físicamente posible (0-20V)"
-    
-    elif tipo_sensor in [TipoSensor.PRESION_LLANTA_DELANTERA.value, TipoSensor.PRESION_LLANTA_TRASERA.value]:
-        if valor < 0 or valor > 60:
-            return False, "Presión de llanta fuera del rango físicamente posible (0-60 PSI)"
-    
-    elif tipo_sensor == TipoSensor.VIBRACIONES.value:
-        if valor < 0 or valor > 10:
-            return False, "Vibraciones fuera del rango físicamente posible (0-10g)"
-    
-    elif tipo_sensor == TipoSensor.RPM.value:
-        if valor < 0 or valor > 20000:
-            return False, "RPM fuera del rango físicamente posible (0-20000)"
-    
-    elif tipo_sensor == TipoSensor.VELOCIDAD.value:
-        if valor < 0 or valor > 400:
-            return False, "Velocidad fuera del rango físicamente posible (0-400 km/h)"
-    
-    elif tipo_sensor == TipoSensor.NIVEL_COMBUSTIBLE.value:
-        if valor < 0 or valor > 100:
-            return False, "Nivel de combustible debe estar entre 0% y 100%"
-    
-    return True, ""
-
-
-def is_valor_fuera_rango(tipo_sensor: str, valor: float) -> bool:
-    """
-    Verifica si un valor está fuera del rango normal (no físicamente posible, sino anormal).
-    
-    Args:
-        tipo_sensor: Tipo de sensor
-        valor: Valor leído
+        True si el esquema es válido
         
-    Returns:
-        True si está fuera del rango normal
+    Raises:
+        ValidationError: Si el esquema es inválido
     """
     try:
-        tipo_enum = TipoSensor(tipo_sensor)
-        if tipo_enum not in SENSOR_RANGES:
-            return False
+        if not isinstance(valor, dict):  # type: ignore[arg-type]
+            raise ValidationError("Valor debe ser un diccionario")
         
-        sensor_range = SENSOR_RANGES[tipo_enum]
-        return valor < sensor_range["min"] or valor > sensor_range["max"]
-    except ValueError:
-        return False
+        # Validar campos requeridos
+        if "value" not in valor:
+            raise ValidationError("Campo 'value' es requerido en valor")
+        
+        if not isinstance(valor["value"], (int, float)):
+            raise ValidationError("Campo 'value' debe ser un número")
+        
+        if "unit" not in valor:
+            raise ValidationError("Campo 'unit' es requerido en valor")
+        
+        if not isinstance(valor["unit"], str):
+            raise ValidationError("Campo 'unit' debe ser una cadena")
+        
+        # Validar raw si existe
+        if "raw" in valor:
+            if not isinstance(valor["raw"], (int, float)):
+                raise ValidationError("Campo 'raw' debe ser un número")
+        
+        logger.debug(f"Valor schema validado: {valor['value']} {valor['unit']}")
+        return True
+        
+    except ValidationError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando valor schema: {e}")
+        raise ValidationError(f"Error al validar valor: {str(e)}")
 
 
-def get_sensor_unit(tipo_sensor: str) -> str:
+# ============================================
+# VALIDADORES DE VALORES EN RANGO
+# ============================================
+
+def validate_valor_in_range(
+    valor: float,
+    thresholds: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
-    Obtiene la unidad de medida para un tipo de sensor.
+    Validar si un valor está dentro de umbrales y calcular severidad.
     
     Args:
-        tipo_sensor: Tipo de sensor
+        valor: Valor a validar
+        thresholds: Diccionario con min y max (opcional)
         
     Returns:
-        Unidad de medida
+        Diccionario con:
+        - in_range: bool
+        - severidad: str (ok, low, medium, high, critical)
+        - deviation: float (porcentaje de desviación)
+        
+    Raises:
+        ValidationError: Si los parámetros son inválidos
     """
     try:
-        tipo_enum = TipoSensor(tipo_sensor)
-        if tipo_enum in SENSOR_RANGES:
-            return SENSOR_RANGES[tipo_enum]["unit"]
-    except ValueError:
-        pass
-    return "unidad"
-
-
-def validate_timestamp_lectura(timestamp: datetime) -> Tuple[bool, str]:
-    """
-    Valida el timestamp de una lectura.
-    
-    Args:
-        timestamp: Timestamp de la lectura
+        if not isinstance(valor, (int, float)):  # type: ignore[arg-type]
+            raise ValidationError("Valor debe ser un número")
         
-    Returns:
-        (es_valido, mensaje_error)
-    """
-    now = datetime.utcnow()
-    
-    # No puede ser en el futuro
-    if timestamp > now:
-        return False, "El timestamp de la lectura no puede ser en el futuro"
-    
-    # No puede ser muy antiguo (más de 1 año)
-    one_year_ago = datetime(now.year - 1, now.month, now.day)
-    if timestamp < one_year_ago:
-        return False, "El timestamp de la lectura es demasiado antiguo"
-    
-    return True, ""
+        # Si no hay umbrales, todo es válido
+        if not thresholds or "min" not in thresholds or "max" not in thresholds:
+            logger.debug("No hay umbrales definidos, valor considerado OK")
+            return {
+                "in_range": True,
+                "severidad": "ok",
+                "deviation": 0.0
+            }
+        
+        min_val = thresholds["min"]
+        max_val = thresholds["max"]
+        range_size = max_val - min_val
+        
+        # Calcular desviación
+        if valor < min_val:
+            deviation = ((min_val - valor) / range_size) * 100
+            in_range = False
+        elif valor > max_val:
+            deviation = ((valor - max_val) / range_size) * 100
+            in_range = False
+        else:
+            deviation = 0.0
+            in_range = True
+        
+        # Calcular severidad basada en desviación
+        if in_range:
+            severidad = "ok"
+        elif deviation <= 10:
+            severidad = "low"
+        elif deviation <= 25:
+            severidad = "medium"
+        elif deviation <= 50:
+            severidad = "high"
+        else:
+            severidad = "critical"
+        
+        result: Dict[str, Any] = {
+            "in_range": in_range,
+            "severidad": severidad,
+            "deviation": round(deviation, 2)
+        }
+        
+        if not in_range:
+            logger.warning(
+                f"Valor {valor} fuera de rango [{min_val}, {max_val}], "
+                f"desviación: {deviation:.2f}%, severidad: {severidad}"
+            )
+        else:
+            logger.debug(f"Valor {valor} dentro de rango [{min_val}, {max_val}]")
+        
+        return result
+        
+    except ValidationError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando valor en rango: {e}")
+        raise ValidationError(f"Error al validar rango: {str(e)}")

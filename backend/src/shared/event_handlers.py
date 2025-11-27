@@ -112,10 +112,14 @@ async def create_falla_from_ml_anomaly(event: Any) -> None:
 async def create_mantenimiento_from_critical_fault(event: Any) -> None:
     """
     Crear orden de mantenimiento urgente cuando se detecta falla crítica.
-    Evento escuchado: FallaCriticaEvent (fallas)
+    Evento escuchado: FallaDetectadaEvent (fallas) con severidad="critica"
     Acción: Crear mantenimiento urgente
     """
     try:
+        # Solo procesar si la falla es crítica
+        if event.severidad != "critica":
+            return
+            
         from src.mantenimiento.use_cases import CreateMantenimientoUseCase
         from src.mantenimiento.schemas import MantenimientoCreate
         from src.config.database import AsyncSessionLocal
@@ -191,8 +195,12 @@ async def create_mantenimiento_from_ml_prediction(event: Any) -> None:
 async def send_notification_for_critical_fault(event: Any) -> None:
     """
     Enviar notificación urgente por falla crítica.
-    Evento escuchado: FallaCriticaEvent (fallas)
+    Evento escuchado: FallaDetectadaEvent (fallas) con severidad="critica"
     """
+    # Solo procesar si la falla es crítica
+    if event.severidad != "critica":
+        return
+        
     logger.critical(f"🚨 Enviando notificación de falla crítica {event.falla_id}")
     # La lógica de notificación se maneja en el módulo de notificaciones
     # Este handler solo registra el evento para auditoría
@@ -288,9 +296,17 @@ async def send_welcome_email(event: Any) -> None:
     """
     Enviar email de bienvenida cuando se registra un usuario.
     Evento escuchado: UserRegisteredEvent (auth)
+    Delega al módulo de notificaciones para crear y enviar el email.
     """
-    logger.info(f"📧 Enviando email de bienvenida a {event.email}")
-    logger.info(f"✅ Email de bienvenida procesado")
+    try:
+        from src.notificaciones.handlers import handle_user_registered
+        
+        logger.info(f"📧 Procesando email de bienvenida a {event.email}")
+        await handle_user_registered(event)
+        logger.info(f"✅ Email de bienvenida procesado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando email de bienvenida: {str(e)}", exc_info=True)
 
 
 async def send_password_reset_email(event: Any) -> None:
@@ -348,8 +364,8 @@ REGISTERED_HANDLERS = {
     # ML → Fallas
     "AnomaliaDetectadaEvent": ["create_falla_from_ml_anomaly"],
     
-    # Fallas → Mantenimiento
-    "FallaCriticaEvent": ["create_mantenimiento_from_critical_fault", "send_notification_for_critical_fault"],
+    # Fallas → Mantenimiento (MVP v2.3: usa FallaDetectadaEvent con severidad="critica")
+    "FallaDetectadaEvent": ["create_mantenimiento_from_critical_fault", "send_notification_for_critical_fault"],
     
     # ML → Mantenimiento
     "PrediccionGeneradaEvent": ["create_mantenimiento_from_ml_prediction", "send_notification_for_ml_prediction"],

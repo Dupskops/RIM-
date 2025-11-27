@@ -1,206 +1,240 @@
 """
 Schemas Pydantic para suscripciones (DTOs).
+
+Estos esquemas se basan en `docs/SCHEMAS.md` (sección suscripciones).
+Incluyen: request/response para checkout, notificaciones de pago, transacciones
+y objetos relacionados a la suscripción de usuario.
 """
-from datetime import datetime
-from typing import Optional, Literal
-from pydantic import BaseModel, Field, field_validator
+from __future__ import annotations
 
-from src.shared.base_models import FilterParams
-from .models import PlanType
-from .validators import (
-    validate_plan,
-    validate_status,
-    validate_date_range,
-    validate_precio,
-    validate_metodo_pago,
-    validate_duracion
-)
+from datetime import datetime, date
+from decimal import Decimal
+from typing import Optional, Any, List
+from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
-# ==================== REQUEST SCHEMAS ====================
+# ----------------------
+# Enums
+# ----------------------
 
-class CreateSuscripcionRequest(BaseModel):
-    """Request para crear una nueva suscripción."""
-    
-    usuario_id: int = Field(..., description="ID del usuario (INTEGER)")
-    plan: str = Field(..., description="Tipo de plan (freemium/premium)")
-    duracion_meses: Optional[int] = Field(
+
+class CancelMode(str, Enum):
+    """Modos de cancelación de suscripción."""
+    IMMEDIATE = "immediate"
+    END_OF_PERIOD = "end_of_period"
+
+
+# ----------------------
+# Sub-esquemas básicos
+# ----------------------
+
+
+class CaracteristicaReadSchema(BaseModel):
+    """Schema para lectura de características (v2.3)."""
+    id: Optional[int] = None
+    clave_funcion: str
+    descripcion: Optional[str] = None
+    limite_free: Optional[int] = Field(
         None,
-        description="Duración en meses (solo para premium)"
+        description="Límite mensual para plan Free. NULL=ilimitado, 0=bloqueado, >0=límite"
     )
-    precio: Optional[float] = Field(None, ge=0, description="Precio del plan")
-    metodo_pago: Optional[str] = Field(None, description="Método de pago")
-    transaction_id: Optional[str] = Field(None, description="ID de transacción")
-    auto_renovacion: bool = Field(default=False, description="Auto-renovación")
-    notas: Optional[str] = Field(None, description="Notas adicionales")
-    
-    @field_validator("plan")
-    @classmethod
-    def validate_plan_field(cls, v: str) -> str:
-        is_valid, error_msg = validate_plan(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("duracion_meses")
-    @classmethod
-    def validate_duracion_field(cls, v: Optional[int]) -> Optional[int]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_duracion(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class UpdateSuscripcionRequest(BaseModel):
-    """Request para actualizar una suscripción."""
-    
-    status: Optional[str] = Field(None, description="Nuevo estado")
-    end_date: Optional[datetime] = Field(None, description="Nueva fecha de fin")
-    auto_renovacion: Optional[bool] = Field(None, description="Auto-renovación")
-    notas: Optional[str] = Field(None, description="Nuevas notas")
-    
-    @field_validator("status")
-    @classmethod
-    def validate_status_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_status(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class UpgradeToPremiumRequest(BaseModel):
-    """Request para upgrade a premium."""
-    
-    duracion_meses: int = Field(..., ge=1, le=24, description="Duración en meses")
-    precio: float = Field(..., gt=0, description="Precio del plan")
-    metodo_pago: str = Field(..., description="Método de pago")
-    transaction_id: str = Field(..., description="ID de transacción")
-    auto_renovacion: bool = Field(default=False, description="Auto-renovación")
-    
-    @field_validator("duracion_meses")
-    @classmethod
-    def validate_duracion_field(cls, v: int) -> int:
-        is_valid, error_msg = validate_duracion(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("metodo_pago")
-    @classmethod
-    def validate_metodo_pago_field(cls, v: str) -> str:
-        is_valid, error_msg = validate_metodo_pago(v, PlanType.PREMIUM)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v.lower()
-
-
-class CancelSuscripcionRequest(BaseModel):
-    """Request para cancelar suscripción."""
-    
-    razon: Optional[str] = Field(None, description="Razón de cancelación")
-
-
-class RenewSuscripcionRequest(BaseModel):
-    """Request para renovar suscripción premium."""
-    
-    duracion_meses: int = Field(..., ge=1, le=24, description="Duración en meses")
-    precio: float = Field(..., gt=0, description="Precio del plan")
-    transaction_id: str = Field(..., description="ID de transacción")
-    
-    @field_validator("duracion_meses")
-    @classmethod
-    def validate_duracion_field(cls, v: int) -> int:
-        is_valid, error_msg = validate_duracion(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class SuscripcionFilterParams(FilterParams):
-    """Parámetros de filtrado para suscripciones."""
-    
-    usuario_id: Optional[int] = Field(None, description="Filtrar por usuario (INTEGER)")
-    plan: Optional[str] = Field(None, description="Filtrar por plan")
-    status: Optional[str] = Field(None, description="Filtrar por estado")
-    activas_only: bool = Field(default=False, description="Solo suscripciones activas")
-    
-    # Ordenamiento
-    order_by: Literal["id", "created_at", "start_date", "end_date"] = Field(
-        default="created_at",
-        description="Campo para ordenar"
+    limite_pro: Optional[int] = Field(
+        None,
+        description="Límite mensual para plan Pro. NULL=ilimitado, 0=bloqueado, >0=límite"
     )
-    order_direction: Literal["asc", "desc"] = Field(
-        default="desc",
-        description="Dirección del ordenamiento"
-    )
-    
-    # Hereda de FilterParams:
-    # - search: Optional[str]
-    # - created_after: Optional[datetime]
-    # - created_before: Optional[datetime]
-    
-    @field_validator("plan")
-    @classmethod
-    def validate_plan_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_plan(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("status")
-    @classmethod
-    def validate_status_field(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        is_valid, error_msg = validate_status(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
 
-
-# ==================== RESPONSE SCHEMAS ====================
-
-class SuscripcionResponse(BaseModel):
-    """Response con información completa de una suscripción."""
-    
-    id: int
-    usuario_id: int  # INTEGER
-    plan: str
-    status: str
-    start_date: datetime
-    end_date: Optional[datetime]
-    cancelled_at: Optional[datetime]
-    precio: Optional[float]
-    metodo_pago: Optional[str]
-    transaction_id: Optional[str]
-    auto_renovacion: bool
-    notas: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-    deleted_at: Optional[datetime]
-    
-    # Propiedades computadas
-    is_active: Optional[bool] = None
-    is_premium: Optional[bool] = None
-    is_freemium: Optional[bool] = None
-    dias_restantes: Optional[int] = None
-    
     class Config:
         from_attributes = True
 
 
-class SuscripcionStatsResponse(BaseModel):
-    """Response con estadísticas de suscripciones."""
-    
-    total_suscripciones: int
-    suscripciones_activas: int
-    suscripciones_freemium: int
-    suscripciones_premium: int
-    ingresos_totales: float
-    tasa_conversion: float  # % de freemium que pasaron a premium
+class PlanReadSchema(BaseModel):
+    id: int
+    nombre_plan: str
+    precio: Decimal = Field(..., description="Precio en Decimal — serializar como string/number con cuidado")
+    periodo_facturacion: Optional[str] = None
+    caracteristicas: List[CaracteristicaReadSchema] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ----------------------
+# Suscripción (usuario)
+# ----------------------
+
+
+class SuscripcionUsuarioReadSchema(BaseModel):
+    suscripcion_id: int
+    plan: PlanReadSchema
+    estado_suscripcion: str
+    fecha_inicio: datetime
+    fecha_fin: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ----------------------
+# Transacciones / Pagos
+# ----------------------
+
+
+class TransaccionCreateResponse(BaseModel):
+    transaccion_id: int
+    payment_token: str = Field(
+        ...,
+        description=(
+            "Token/valor que el cliente usará para completar o simular el pago. "
+            "Convención MVP: '0' => success, '1' => failed"
+        ),
+    )
+
+
+class TransaccionReadSchema(BaseModel):
+    transaccion_id: int
+    usuario_id: Optional[int] = None
+    plan_id: Optional[int] = None
+    monto: Decimal
+    status: str  # pending | success | failed
+    provider_metadata: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class PaymentNotificationSchema(BaseModel):
+    transaccion_id: int
+    payment_token: str
+    metadata: Optional[dict[str, Any]] = None
+
+
+# ----------------------
+# Requests para Checkout / Cancel / Admin
+# ----------------------
+
+
+class CheckoutCreateRequest(BaseModel):
+    usuario_id: int
+    plan_id: int
+    monto: Optional[Decimal] = None
+    payment_method: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class SuscripcionCancelRequest(BaseModel):
+    mode: CancelMode = Field(
+        ..., 
+        description="Modo de cancelación: 'immediate' (inmediato) o 'end_of_period' (al final del periodo)"
+    )
+    reason: Optional[str] = Field(
+        None, 
+        max_length=1000,
+        description="Motivo opcional de cancelación"
+    )
+
+
+class AdminAssignSubscriptionRequest(BaseModel):
+    usuario_id: int
+    plan_id: int
+    fecha_inicio: Optional[datetime] = None
+    fecha_fin: Optional[datetime] = None
+
+
+# ----------------------
+# Schemas v2.3 Freemium (Límites)
+# ----------------------
+
+
+class SuscripcionReadSchema(BaseModel):
+    """Schema para lectura de suscripción (v2.3)."""
+    id: int
+    usuario_id: int
+    plan: Optional[PlanReadSchema] = None
+    fecha_inicio: datetime
+    fecha_fin: Optional[datetime] = None
+    estado_suscripcion: Optional[str] = None
+    features_status: List[FeatureStatusSchema] = Field(
+        default=[], 
+        description="Estado detallado de todas las características (uso, límites, upsells)"
+    )
+
+    class Config:
+        from_attributes = True
+
+
+class LimiteCheckResponse(BaseModel):
+    """Respuesta al verificar límite de una característica."""
+    puede_usar: bool = Field(..., description="True si puede usar la característica")
+    usos_realizados: int = Field(..., description="Número de usos realizados este mes")
+    limite: Optional[int] = Field(None, description="Límite mensual (NULL=ilimitado)")
+    usos_restantes: Optional[int] = Field(None, description="Usos restantes este mes")
+    mensaje: str = Field(..., description="Mensaje descriptivo del estado")
+    periodo_actual: date = Field(..., description="Primer día del mes actual (solo fecha)")
+
+
+class LimiteRegistroResponse(BaseModel):
+    """Respuesta al registrar un uso de característica."""
+    exito: bool = Field(..., description="True si se registró exitosamente")
+    usos_realizados: int = Field(..., description="Número total de usos después del registro")
+    limite: Optional[int] = Field(None, description="Límite mensual")
+    usos_restantes: Optional[int] = Field(None, description="Usos restantes")
+    mensaje: str = Field(..., description="Mensaje descriptivo")
+
+
+class UsoHistorialResponse(BaseModel):
+    """Respuesta con historial de uso de una característica."""
+    caracteristica: str = Field(..., description="Clave de la característica")
+    usos_realizados: int = Field(..., description="Usos realizados este mes")
+    limite_mensual: int = Field(..., description="Límite mensual copiado")
+    ultimo_uso_at: Optional[datetime] = Field(None, description="Timestamp del último uso")
+    periodo_mes: date = Field(..., description="Primer día del mes (solo fecha)")
+
+    class Config:
+        from_attributes = True
+
+
+class CambiarPlanRequest(BaseModel):
+    """Request para cambiar de plan (genérico)."""
+    plan_id: int = Field(..., description="ID del plan destino", gt=0)
+
+
+
+class FeatureStatusSchema(BaseModel):
+    """Estado detallado de una característica para el usuario."""
+    caracteristica: str = Field(..., description="Clave de la característica")
+    descripcion: Optional[str] = Field(None, description="Descripción amigable")
+    uso_actual: int = Field(0, description="Uso realizado este mes")
+    limite_actual: Optional[int] = Field(None, description="Límite del plan actual (NULL=ilimitado)")
+    limite_pro: Optional[int] = Field(None, description="Límite del plan Pro (NULL=ilimitado)")
+    upsell_message: Optional[str] = Field(None, description="Mensaje para incentivar upgrade si aplica")
+
+    class Config:
+        from_attributes = True
+
+
+class SuscripcionEstadoResponse(BaseModel):
+    """Respuesta agregada con estado completo de la suscripción."""
+    plan_actual: str = Field(..., description="Nombre del plan actual (FREE/Pro)")
+    features: List[FeatureStatusSchema] = Field(..., description="Lista de características y su estado")
+
+
+__all__ = [
+    "CancelMode",
+    "CaracteristicaReadSchema",
+    "PlanReadSchema",
+    "SuscripcionUsuarioReadSchema",
+    "SuscripcionReadSchema",
+    "TransaccionCreateResponse",
+    "TransaccionReadSchema",
+    "PaymentNotificationSchema",
+    "CheckoutCreateRequest",
+    "SuscripcionCancelRequest",
+    "AdminAssignSubscriptionRequest",
+    "LimiteCheckResponse",
+    "LimiteRegistroResponse",
+    "UsoHistorialResponse",
+    "CambiarPlanRequest",
+    "FeatureStatusSchema",
+    "SuscripcionEstadoResponse",
+]

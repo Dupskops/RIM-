@@ -1,285 +1,154 @@
 """
-Casos de uso del módulo de fallas.
-Orquesta la lógica de negocio y coordina entre repositorios y servicios.
+Casos de uso para gestión de fallas.
+MVP v2.3 - Actualizado para schema simplificado
 """
-from typing import Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import List, Tuple
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Falla
+from src.shared.exceptions import (
+    ResourceNotFoundException,
+    ValidationException
+)
+from src.shared.base_models import PaginationParams
+
+from .models import Falla, EstadoFalla, SeveridadFalla, OrigenDeteccion
+from .repositories import FallaRepository
 from .schemas import (
     FallaCreate,
-    FallaMLCreate,
     FallaUpdate,
-    FallaDiagnosticar,
-    FallaResolver,
-    FallaStatsResponse,
-    FallaFilterParams
-)
-from .repositories import FallaRepository
-from .services import (
-    generate_codigo_falla,
-    determine_severidad_from_sensor,
-    determine_puede_conducir,
-    generate_solucion_sugerida,
-    estimate_costo_reparacion,
-    should_emit_critical_event,
-    calcular_tasa_resolucion,
-    calcular_tiempo_promedio_resolucion
+    FallaFilterParams,
+    FallaStatsResponse
 )
 from .validators import (
-    validate_tipo_falla,
-    validate_severidad,
     validate_transition_estado,
-    can_update_falla,
-    validate_fechas,
-    calculate_dias_resolucion
+    validate_falla_data
+)
+from .services import (
+    determine_puede_conducir,
+    generate_solucion_sugerida,
+    calculate_dias_resolucion,
+    can_auto_resolve,
+    calculate_prioridad
 )
 from .events import (
     FallaDetectadaEvent,
-    FallaCriticaEvent,
-    FallaDiagnosticadaEvent,
+    FallaActualizadaEvent,
     FallaResueltaEvent
 )
-from ..shared.exceptions import ResourceNotFoundException, ResourceAlreadyExistsException
-from ..shared.constants import EstadoFalla
-from ..shared.base_models import PaginationParams
 
+
+# =============================================================================
+# CREAR FALLA (Detección Automática o Reporte Manual)
+# =============================================================================
 
 class CreateFallaUseCase:
-    """Caso de uso para crear una nueva falla."""
+    """
+    Caso de uso para crear una nueva falla.
+    
+    Flujo según FLUJOS_SISTEMA.md:
+    1. Validar datos de entrada
+    2. Generar código único FL-YYYYMMDD-NNN
+    3. Determinar puede_conducir según tipo y severidad
+    4. Generar solución sugerida
+    5. Crear registro en DB
+    6. Emitir evento FallaDetectada
+    """
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
+        self.session = session
     
-    async def execute(
-        self,
-        data: FallaCreate,
-        usuario_id: Optional[int] = None
-    ) -> Falla:
+    async def execute(self, data: FallaCreate, usuario_id: int) -> Falla:
         """
         Crea una nueva falla.
         
         Args:
-            data: Datos de la falla
-            usuario_id: ID del usuario que reporta (opcional)
+            data: Datos de la falla a crear
+            usuario_id: ID del usuario que reporta (0 si es automático)
             
         Returns:
-            Falla creada
+            Falla: Falla creada
             
         Raises:
-            ValueError: Si los datos son inválidos
+            ValidationException: Si los datos no son válidos
         """
-        # Validar tipo y severidad
-        validate_tipo_falla(data.tipo)
-        validate_severidad(data.severidad)
+        # Validar datos
+        await validate_falla_data(data, self.session)
         
         # Generar código único
-        codigo = generate_codigo_falla()
+        fecha_actual = datetime.now(timezone.utc)
+        codigo_base = f"FL-{fecha_actual.strftime('%Y%m%d')}-"
         
-        # Verificar que no exista el código (por si acaso)
-        existing = await self.repo.get_by_codigo(codigo)
-        if existing:
-            # Regenerar si existe (muy improbable)
-            codigo = generate_codigo_falla()
-        
-        # Determinar si puede conducir si no se especificó
-        puede_conducir = data.puede_conducir
-        if puede_conducir is None:
-            puede_conducir = determine_puede_conducir(data.tipo, data.severidad)
-        
-        # Generar solución sugerida si no se proporcionó
-        solucion_sugerida = data.solucion_sugerida
-        if not solucion_sugerida:
-            solucion_sugerida = generate_solucion_sugerida(data.tipo, data.severidad)
-        
-        # Crear modelo
-        falla = Falla(
-            moto_id=data.moto_id,
-            sensor_id=data.sensor_id,
-            usuario_id=usuario_id,
-            codigo=codigo,
-            tipo=data.tipo,
-            titulo=data.titulo,
-            descripcion=data.descripcion,
-            severidad=data.severidad,
-            estado=EstadoFalla.DETECTADA.value,
-            origen_deteccion=data.origen_deteccion,
-            valor_actual=data.valor_actual,
-            valor_esperado=data.valor_esperado,
-            requiere_atencion_inmediata=data.requiere_atencion_inmediata,
-            puede_conducir=puede_conducir,
-            solucion_sugerida=solucion_sugerida,
-            fecha_deteccion=datetime.utcnow()
-        )
-        
-        # Guardar en BD
-        falla = await self.repo.create(falla)
-        
-        # Emitir evento de falla detectada
-        await FallaDetectadaEvent(
-            falla_id=falla.id,
-            moto_id=falla.moto_id,
-            tipo=falla.tipo,
-            severidad=falla.severidad,
-            titulo=falla.titulo,
-            descripcion=falla.descripcion,
-            requiere_atencion_inmediata=falla.requiere_atencion_inmediata,
-            puede_conducir=falla.puede_conducir,
-            origen_deteccion=falla.origen_deteccion,
-            usuario_id=usuario_id,
-            sensor_id=falla.sensor_id
-        ).emit()
-        
-        # Si es crítica, emitir evento crítico también
-        if should_emit_critical_event(falla):
-            await FallaCriticaEvent(
-                falla_id=falla.id,
-                moto_id=falla.moto_id,
-                tipo=falla.tipo,
-                titulo=falla.titulo,
-                descripcion=falla.descripcion,
-                puede_conducir=falla.puede_conducir,
-                usuario_id=usuario_id
-            ).emit()
-        
-        return falla
-
-
-class CreateFallaMLUseCase:
-    """Caso de uso para crear falla detectada por ML."""
-    
-    def __init__(self, session: AsyncSession):
-        self.repo = FallaRepository(session)
-    
-    async def execute(self, data: FallaMLCreate) -> Falla:
-        """
-        Crea una falla detectada por ML/IA.
-        
-        Args:
-            data: Datos de la falla ML
-            
-        Returns:
-            Falla creada
-        """
-        # Validar
-        validate_tipo_falla(data.tipo)
-        validate_severidad(data.severidad)
-        
-        # Generar código
-        codigo = generate_codigo_falla()
+        # Obtener siguiente número secuencial del día
+        count_hoy = await self.repo.count_by_date(fecha_actual.date())
+        numero_secuencial = str(count_hoy + 1).zfill(3)
+        codigo = f"{codigo_base}{numero_secuencial}"
         
         # Determinar si puede conducir
-        puede_conducir = data.puede_conducir
-        if puede_conducir is None:
-            puede_conducir = determine_puede_conducir(data.tipo, data.severidad)
+        puede_conducir = determine_puede_conducir(data.tipo, data.severidad)
+        
+        # Generar solución sugerida
+        solucion_sugerida = generate_solucion_sugerida(data.tipo, data.severidad)
+        
+        # Determinar si requiere atención inmediata
+        requiere_atencion_inmediata = (
+            data.severidad in [SeveridadFalla.CRITICA, SeveridadFalla.ALTA] or
+            not puede_conducir
+        )
         
         # Crear falla
         falla = Falla(
             moto_id=data.moto_id,
-            sensor_id=data.sensor_id,
+            componente_id=data.componente_id,
             codigo=codigo,
-            tipo=data.tipo,
-            titulo=data.titulo,
+            tipo=data.tipo.lower(),
             descripcion=data.descripcion,
             severidad=data.severidad,
-            estado=EstadoFalla.DETECTADA.value,
-            origen_deteccion="ml",
-            valor_actual=data.valor_actual,
-            valor_esperado=data.valor_esperado,
-            confianza_ml=data.confianza_ml,
-            modelo_ml_usado=data.modelo_ml_usado,
-            prediccion_ml=data.prediccion_ml,
-            requiere_atencion_inmediata=data.requiere_atencion_inmediata,
+            estado=EstadoFalla.DETECTADA,
+            origen_deteccion=data.origen_deteccion or OrigenDeteccion.SENSOR,
+            latitud=data.latitud,
+            longitud=data.longitud,
             puede_conducir=puede_conducir,
-            solucion_sugerida=data.solucion_sugerida or generate_solucion_sugerida(data.tipo, data.severidad),
-            fecha_deteccion=datetime.utcnow()
+            requiere_atencion_inmediata=requiere_atencion_inmediata,
+            solucion_sugerida=solucion_sugerida,
+            fecha_deteccion=fecha_actual
         )
         
+        # Guardar
         falla = await self.repo.create(falla)
         
-        # Emitir eventos
+        # Emitir evento
         await FallaDetectadaEvent(
             falla_id=falla.id,
             moto_id=falla.moto_id,
+            componente_id=falla.componente_id,
             tipo=falla.tipo,
-            severidad=falla.severidad,
-            titulo=falla.titulo,
-            descripcion=falla.descripcion,
-            requiere_atencion_inmediata=falla.requiere_atencion_inmediata,
+            severidad=falla.severidad.value,
             puede_conducir=falla.puede_conducir,
-            origen_deteccion="ml",
-            sensor_id=falla.sensor_id
+            requiere_atencion_inmediata=falla.requiere_atencion_inmediata,
+            usuario_id=usuario_id,
+            origen=falla.origen_deteccion.value
         ).emit()
         
-        if should_emit_critical_event(falla):
-            await FallaCriticaEvent(
-                falla_id=falla.id,
-                moto_id=falla.moto_id,
-                tipo=falla.tipo,
-                titulo=falla.titulo,
-                descripcion=falla.descripcion,
-                puede_conducir=falla.puede_conducir
-            ).emit()
-        
         return falla
 
 
-class UpdateFallaUseCase:
-    """Caso de uso para actualizar una falla."""
-    
-    def __init__(self, session: AsyncSession):
-        self.repo = FallaRepository(session)
-    
-    async def execute(self, falla_id: int, data: FallaUpdate) -> Falla:
-        """
-        Actualiza una falla existente.
-        
-        Args:
-            falla_id: ID de la falla
-            data: Datos a actualizar
-            
-        Returns:
-            Falla actualizada
-            
-        Raises:
-            ResourceNotFoundException: Si la falla no existe
-            ValueError: Si la actualización no es válida
-        """
-        # Obtener falla
-        falla = await self.repo.get_by_id(falla_id)
-        if not falla:
-            raise ResourceNotFoundException("Falla", str(falla_id))
-        
-        # Validar que se puede actualizar
-        can_update_falla(falla)
-        
-        # Actualizar campos
-        if data.estado is not None:
-            validate_transition_estado(falla.estado, data.estado)
-            falla.estado = data.estado
-        
-        if data.severidad is not None:
-            validate_severidad(data.severidad)
-            falla.severidad = data.severidad
-        
-        if data.solucion_aplicada is not None:
-            falla.solucion_aplicada = data.solucion_aplicada
-        
-        if data.costo_real is not None:
-            falla.costo_real = data.costo_real
-        
-        if data.notas_tecnico is not None:
-            falla.notas_tecnico = data.notas_tecnico
-        
-        # Guardar
-        falla = await self.repo.update(falla)
-        
-        return falla
-
+# =============================================================================
+# DIAGNOSTICAR FALLA (Cambiar a EN_REPARACION)
+# =============================================================================
 
 class DiagnosticarFallaUseCase:
-    """Caso de uso para diagnosticar una falla."""
+    """
+    Caso de uso para diagnosticar una falla y moverla a reparación.
+    
+    Flujo según FLUJOS_SISTEMA.md v2.3:
+    - Estado: DETECTADA → EN_REPARACION
+    - Actualiza solucion_sugerida si se proporciona
+    - NO maneja costo_estimado (eso va en mantenimientos)
+    - NO maneja fecha_diagnostico (eliminado en v2.3)
+    """
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
@@ -287,58 +156,66 @@ class DiagnosticarFallaUseCase:
     async def execute(
         self,
         falla_id: int,
-        data: FallaDiagnosticar,
-        usuario_id: Optional[int] = None
+        solucion_sugerida: str,
+        usuario_id: int
     ) -> Falla:
         """
-        Diagnostica una falla.
+        Diagnostica una falla y la mueve a estado EN_REPARACION.
         
         Args:
             falla_id: ID de la falla
-            data: Datos del diagnóstico
+            solucion_sugerida: Solución propuesta por técnico/ML
             usuario_id: ID del usuario que diagnostica
             
         Returns:
-            Falla diagnosticada
+            Falla: Falla actualizada
             
         Raises:
             ResourceNotFoundException: Si la falla no existe
+            ValidationException: Si la transición de estado no es válida
         """
         # Obtener falla
         falla = await self.repo.get_by_id(falla_id)
         if not falla:
             raise ResourceNotFoundException("Falla", str(falla_id))
         
-        # Validar transición de estado
-        validate_transition_estado(falla.estado, EstadoFalla.EN_REVISION.value)
+        # Validar transición de estado (DETECTADA → EN_REPARACION)
+        validate_transition_estado(falla.estado, EstadoFalla.EN_REPARACION)
         
         # Actualizar
-        falla.estado = EstadoFalla.EN_REVISION.value
-        falla.solucion_sugerida = data.solucion_sugerida
-        falla.costo_estimado = data.costo_estimado or estimate_costo_reparacion(falla.tipo, falla.severidad)
-        falla.fecha_diagnostico = datetime.utcnow()
-        
-        if data.notas_tecnico:
-            falla.notas_tecnico = data.notas_tecnico
+        falla.estado = EstadoFalla.EN_REPARACION
+        falla.solucion_sugerida = solucion_sugerida
         
         # Guardar
         falla = await self.repo.update(falla)
         
         # Emitir evento
-        await FallaDiagnosticadaEvent(
+        await FallaActualizadaEvent(
             falla_id=falla.id,
             moto_id=falla.moto_id,
             tipo=falla.tipo,
-            solucion_sugerida=falla.solucion_sugerida or "",
-            usuario_id=usuario_id,
-            costo_estimado=falla.costo_estimado
+            estado_anterior="detectada",
+            estado_nuevo="en_reparacion",
+            usuario_id=usuario_id
         ).emit()
         
         return falla
 
 
+# =============================================================================
+# RESOLVER FALLA (Cambiar a RESUELTA)
+# =============================================================================
+
 class ResolverFallaUseCase:
-    """Caso de uso para resolver una falla."""
+    """
+    Caso de uso para resolver una falla.
+    
+    Flujo según FLUJOS_SISTEMA.md v2.3:
+    - Estado: EN_REPARACION → RESUELTA
+    - Registra fecha_resolucion
+    - NO maneja solucion_aplicada, costo_real (van en mantenimientos)
+    - Calcula días de resolución
+    """
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
@@ -346,63 +223,52 @@ class ResolverFallaUseCase:
     async def execute(
         self,
         falla_id: int,
-        data: FallaResolver,
-        usuario_id: Optional[int] = None
+        usuario_id: int
     ) -> Falla:
         """
-        Marca una falla como resuelta.
+        Resuelve una falla marcándola como RESUELTA.
         
         Args:
             falla_id: ID de la falla
-            data: Datos de la resolución
-            usuario_id: ID del usuario que resolvió
+            usuario_id: ID del usuario que resuelve
             
         Returns:
-            Falla resuelta
+            Falla: Falla resuelta
             
         Raises:
             ResourceNotFoundException: Si la falla no existe
+            ValidationException: Si la transición no es válida
         """
         # Obtener falla
         falla = await self.repo.get_by_id(falla_id)
         if not falla:
             raise ResourceNotFoundException("Falla", str(falla_id))
         
-        # Validar transición
-        validate_transition_estado(falla.estado, EstadoFalla.RESUELTA.value)
+        # Validar transición (EN_REPARACION → RESUELTA)
+        validate_transition_estado(falla.estado, EstadoFalla.RESUELTA)
         
         # Actualizar
-        falla.estado = EstadoFalla.RESUELTA.value
-        falla.solucion_aplicada = data.solucion_aplicada
-        falla.costo_real = data.costo_real
-        falla.fecha_resolucion = datetime.utcnow()
-        
-        if data.notas_tecnico:
-            falla.notas_tecnico = data.notas_tecnico
-        
-        # Validar fechas
-        validate_fechas(
-            falla.fecha_deteccion,
-            falla.fecha_diagnostico,
-            falla.fecha_resolucion
-        )
-        
-        # Calcular días de resolución
-        dias_resolucion = calculate_dias_resolucion(
-            falla.fecha_deteccion,
-            falla.fecha_resolucion  # type: ignore
-        )
+        falla.estado = EstadoFalla.RESUELTA
+        falla.fecha_resolucion = datetime.now(timezone.utc)
         
         # Guardar
         falla = await self.repo.update(falla)
+        
+        # Calcular días de resolución
+        dias_resolucion = 0
+        if falla.fecha_deteccion and falla.fecha_resolucion:
+            dias_resolucion = calculate_dias_resolucion(
+                falla.fecha_deteccion,
+                falla.fecha_resolucion
+            )
         
         # Emitir evento
         await FallaResueltaEvent(
             falla_id=falla.id,
             moto_id=falla.moto_id,
             tipo=falla.tipo,
-            solucion_aplicada=falla.solucion_aplicada or "",
-            costo_real=falla.costo_real or 0.0,
+            solucion_aplicada="",  # Ya no se maneja en fallas (va en mantenimientos)
+            costo_real=0.0,  # Ya no se maneja en fallas (va en mantenimientos)
             dias_resolucion=dias_resolucion,
             usuario_id=usuario_id
         ).emit()
@@ -410,8 +276,103 @@ class ResolverFallaUseCase:
         return falla
 
 
-class GetFallaUseCase:
-    """Caso de uso para obtener una falla."""
+# =============================================================================
+# ACTUALIZAR FALLA (Campos editables)
+# =============================================================================
+
+class UpdateFallaUseCase:
+    """
+    Caso de uso para actualizar campos de una falla.
+    
+    Campos editables en MVP v2.3:
+    - descripcion
+    - severidad
+    - solucion_sugerida
+    - latitud/longitud
+    
+    NO editables:
+    - estado (usar DiagnosticarFalla o ResolverFalla)
+    - tipo
+    - moto_id, componente_id
+    - fechas del sistema
+    """
+    
+    def __init__(self, session: AsyncSession):
+        self.repo = FallaRepository(session)
+    
+    async def execute(
+        self,
+        falla_id: int,
+        data: FallaUpdate,
+        usuario_id: int
+    ) -> Falla:
+        """
+        Actualiza campos de una falla.
+        
+        Args:
+            falla_id: ID de la falla
+            data: Datos a actualizar
+            usuario_id: ID del usuario que actualiza
+            
+        Returns:
+            Falla: Falla actualizada
+            
+        Raises:
+            ResourceNotFoundException: Si la falla no existe
+        """
+        # Obtener falla
+        falla = await self.repo.get_by_id(falla_id)
+        if not falla:
+            raise ResourceNotFoundException("Falla", str(falla_id))
+        
+        # Guardar estado anterior para el evento
+        estado_anterior = falla.estado.value
+        
+        # Actualizar campos permitidos
+        if data.descripcion is not None:
+            falla.descripcion = data.descripcion
+        
+        if data.severidad is not None:
+            falla.severidad = data.severidad
+            # Recalcular puede_conducir
+            falla.puede_conducir = determine_puede_conducir(falla.tipo, data.severidad)
+            # Recalcular requiere_atencion_inmediata
+            falla.requiere_atencion_inmediata = (
+                data.severidad in [SeveridadFalla.CRITICA, SeveridadFalla.ALTA] or
+                not falla.puede_conducir
+            )
+        
+        if data.solucion_sugerida is not None:
+            falla.solucion_sugerida = data.solucion_sugerida
+        
+        if data.latitud is not None:
+            falla.latitud = data.latitud
+        
+        if data.longitud is not None:
+            falla.longitud = data.longitud
+        
+        # Guardar
+        falla = await self.repo.update(falla)
+        
+        # Emitir evento
+        await FallaActualizadaEvent(
+            falla_id=falla.id,
+            moto_id=falla.moto_id,
+            tipo=falla.tipo,
+            estado_anterior=estado_anterior,
+            estado_nuevo=falla.estado.value,
+            usuario_id=usuario_id
+        ).emit()
+        
+        return falla
+
+
+# =============================================================================
+# OBTENER FALLA POR ID
+# =============================================================================
+
+class GetFallaByIdUseCase:
+    """Caso de uso para obtener una falla por ID."""
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
@@ -424,7 +385,7 @@ class GetFallaUseCase:
             falla_id: ID de la falla
             
         Returns:
-            Falla encontrada
+            Falla: Falla encontrada
             
         Raises:
             ResourceNotFoundException: Si no existe
@@ -436,8 +397,42 @@ class GetFallaUseCase:
         return falla
 
 
+# =============================================================================
+# OBTENER FALLA POR CÓDIGO
+# =============================================================================
+
+class GetFallaByCodigoUseCase:
+    """Caso de uso para obtener una falla por su código único."""
+    
+    def __init__(self, session: AsyncSession):
+        self.repo = FallaRepository(session)
+    
+    async def execute(self, codigo: str) -> Falla:
+        """
+        Obtiene una falla por código.
+        
+        Args:
+            codigo: Código único (ej: FL-20251110-001)
+            
+        Returns:
+            Falla: Falla encontrada
+            
+        Raises:
+            ResourceNotFoundException: Si no existe
+        """
+        falla = await self.repo.get_by_codigo(codigo)
+        if not falla:
+            raise ResourceNotFoundException("Falla", f"codigo={codigo}")
+        
+        return falla
+
+
+# =============================================================================
+# LISTAR FALLAS DE UNA MOTO
+# =============================================================================
+
 class ListFallasByMotoUseCase:
-    """Caso de uso para listar fallas de una moto."""
+    """Caso de uso para listar fallas de una moto con filtros y paginación."""
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
@@ -448,18 +443,21 @@ class ListFallasByMotoUseCase:
         pagination: PaginationParams
     ) -> Tuple[List[Falla], int]:
         """
-        Lista fallas de una moto con paginación.
+        Lista fallas de una moto con filtros y paginación.
         
         Args:
-            filters: Filtros a aplicar
-            pagination: Parámetros de paginación
+            filters: Filtros a aplicar (moto_id, estado, severidad, etc.)
+            pagination: Parámetros de paginación (offset, limit)
             
         Returns:
-            Tupla con (lista de fallas, total)
+            Tupla con (lista de fallas, total de registros)
         """
-        # Obtener fallas con paginación
+        if not filters.moto_id:
+            raise ValidationException("moto_id es requerido para listar fallas")
+        
+        # Aplicar filtros del repository
         fallas = await self.repo.get_by_moto(
-            filters.moto_id,  # type: ignore
+            moto_id=filters.moto_id,
             solo_activas=filters.solo_activas or False,
             skip=pagination.offset,
             limit=pagination.limit
@@ -467,96 +465,126 @@ class ListFallasByMotoUseCase:
         
         # Contar total
         total = await self.repo.count_by_moto(
-            filters.moto_id,  # type: ignore
+            moto_id=filters.moto_id,
             solo_activas=filters.solo_activas or False
         )
         
         return fallas, total
 
 
+# =============================================================================
+# OBTENER ESTADÍSTICAS DE FALLAS
+# =============================================================================
+
 class GetFallaStatsUseCase:
-    """Caso de uso para obtener estadísticas de fallas (Premium)."""
+    """
+    Caso de uso para obtener estadísticas de fallas de una moto.
+    Feature Premium según FLUJOS_SISTEMA.md
+    """
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
     
     async def execute(self, moto_id: int) -> FallaStatsResponse:
         """
-        Obtiene estadísticas completas de fallas de una moto.
+        Obtiene estadísticas agregadas de fallas.
         
         Args:
             moto_id: ID de la moto
             
         Returns:
-            Estadísticas de fallas
+            FallaStatsResponse: Estadísticas calculadas
         """
-        # Contar totales
-        total_fallas = await self.repo.count_by_moto(moto_id, solo_activas=False)
-        fallas_activas = await self.repo.count_by_moto(moto_id, solo_activas=True)
-        fallas_resueltas = total_fallas - fallas_activas
+        # Obtener todas las fallas de la moto
+        fallas = await self.repo.get_by_moto(moto_id, solo_activas=False, skip=0, limit=1000)
         
-        # Contar críticas activas
-        criticas = await self.repo.get_criticas_activas(moto_id)
-        fallas_criticas = len(criticas)
+        # Calcular estadísticas
+        total = len(fallas)
+        activas = sum(1 for f in fallas if f.estado != EstadoFalla.RESUELTA)
+        resueltas = sum(1 for f in fallas if f.estado == EstadoFalla.RESUELTA)
+        criticas = sum(1 for f in fallas if f.severidad == SeveridadFalla.CRITICA)
         
-        # Stats por categorías
-        por_tipo = await self.repo.get_stats_by_tipo(moto_id)
-        por_severidad = await self.repo.get_stats_by_severidad(moto_id)
+        # Estadísticas por tipo
+        por_tipo: dict = {}
+        for falla in fallas:
+            por_tipo[falla.tipo] = por_tipo.get(falla.tipo, 0) + 1
         
-        # Estado (calculado manualmente)
-        todas_fallas = await self.repo.get_by_moto(moto_id, solo_activas=False, skip=0, limit=10000)
-        por_estado = {}
-        for falla in todas_fallas:
-            por_estado[falla.estado] = por_estado.get(falla.estado, 0) + 1
+        # Estadísticas por severidad
+        por_severidad: dict = {}
+        for falla in fallas:
+            key = falla.severidad.value
+            por_severidad[key] = por_severidad.get(key, 0) + 1
         
-        # Tiempo promedio de resolución
-        tiempo_promedio = calcular_tiempo_promedio_resolucion(todas_fallas)
+        # Estadísticas por estado
+        por_estado: dict = {}
+        for falla in fallas:
+            key = falla.estado.value
+            por_estado[key] = por_estado.get(key, 0) + 1
         
-        # Costo total
-        costo_total = await self.repo.get_costo_total_reparaciones(moto_id)
+        # Calcular tiempo promedio de resolución (solo fallas resueltas)
+        fallas_resueltas = [f for f in fallas if f.estado == EstadoFalla.RESUELTA and f.fecha_deteccion and f.fecha_resolucion]
         
-        # Tasa de resolución
-        tasa = calcular_tasa_resolucion(total_fallas, fallas_resueltas)
+        if fallas_resueltas:
+            dias_resolucion = [
+                calculate_dias_resolucion(f.fecha_deteccion, f.fecha_resolucion)  # type: ignore
+                for f in fallas_resueltas
+            ]
+            tiempo_promedio_resolucion = sum(dias_resolucion) / len(dias_resolucion)
+        else:
+            tiempo_promedio_resolucion = 0.0
         
         return FallaStatsResponse(
-            total_fallas=total_fallas,
-            fallas_activas=fallas_activas,
-            fallas_resueltas=fallas_resueltas,
-            fallas_criticas=fallas_criticas,
+            total=total,
+            activas=activas,
+            resueltas=resueltas,
+            criticas=criticas,
             por_tipo=por_tipo,
             por_severidad=por_severidad,
             por_estado=por_estado,
-            tiempo_promedio_resolucion_dias=tiempo_promedio,
-            costo_total_reparaciones=costo_total,
-            tasa_resolucion=tasa
+            tiempo_promedio_resolucion=tiempo_promedio_resolucion
         )
 
 
-class DeleteFallaUseCase:
-    """Caso de uso para eliminar una falla."""
+# =============================================================================
+# AUTO-RESOLVER FALLAS TRANSITORIAS
+# =============================================================================
+
+class AutoResolveFallasUseCase:
+    """
+    Caso de uso para auto-resolver fallas transitorias.
+    
+    Se ejecuta periódicamente (cron job) para resolver automáticamente
+    fallas de baja severidad detectadas por sensor que ya no aplican.
+    """
     
     def __init__(self, session: AsyncSession):
         self.repo = FallaRepository(session)
     
-    async def execute(self, falla_id: int) -> bool:
+    async def execute(self) -> int:
         """
-        Elimina (soft delete) una falla.
+        Auto-resuelve fallas transitorias elegibles.
         
-        Args:
-            falla_id: ID de la falla
-            
         Returns:
-            True si se eliminó
-            
-        Raises:
-            ResourceNotFoundException: Si no existe
+            int: Número de fallas auto-resueltas
         """
-        falla = await self.repo.get_by_id(falla_id)
-        if not falla:
-            raise ResourceNotFoundException("Falla", str(falla_id))
+        # Obtener fallas activas de baja severidad
+        fallas_activas = await self.repo.get_by_estado(EstadoFalla.DETECTADA)
         
-        # Validar que se puede eliminar
-        from .validators import can_delete_falla
-        can_delete_falla(falla)
+        resueltas_count = 0
         
-        return await self.repo.delete(falla_id)
+        for falla in fallas_activas:
+            # Verificar si puede auto-resolverse
+            if can_auto_resolve(
+                falla.severidad,
+                falla.origen_deteccion,
+                falla.tipo
+            ):
+                # Marcar como resuelta
+                falla.estado = EstadoFalla.RESUELTA
+                falla.fecha_resolucion = datetime.now(timezone.utc)
+                falla.solucion_sugerida += " [Auto-resuelta: condición normalizada]"
+                
+                await self.repo.update(falla)
+                resueltas_count += 1
+        
+        return resueltas_count

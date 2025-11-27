@@ -35,7 +35,6 @@ from .use_cases import (
 )
 from .repositories import UsuarioRepository
 from src.shared.base_models import ApiResponse, SuccessResponse, create_success_response
-#from src.shared import helpers
 
 router = APIRouter()
 
@@ -56,7 +55,7 @@ async def register(
     result = await use_case.execute(db, data)
     
     return LoginResponse(
-        user=UserResponse.from_orm(result["user"]),
+        user=result["user"],  # Ya viene como UserResponse del use case
         tokens=TokenResponse(**result["tokens"])
     )
 
@@ -82,7 +81,7 @@ async def login(
     result = await use_case.execute(db, data, ip_address, user_agent)
     
     return LoginResponse(
-        user=UserResponse.from_orm(result["user"]),
+        user=result["user"],  # Ya viene como UserResponse del use case
         tokens=TokenResponse(**result["tokens"])
     )
 
@@ -226,9 +225,12 @@ async def get_current_user(
     #Estoy cambiando current_user_id a int(current_user_id)
     usuario = await usuario_repo.get_by_id(current_user_id)
     
+    # Convertir a UserResponse dentro de la sesión
+    user_response = UserResponse.model_validate(usuario)
+    
     return create_success_response(
         message="Perfil obtenido exitosamente",
-        data=usuario
+        data=user_response
     )
 
 
@@ -255,9 +257,12 @@ async def update_profile(
     
     usuario = await usuario_repo.update(usuario)
     
+    # Convertir a UserResponse dentro de la sesión
+    user_response = UserResponse.model_validate(usuario)
+    
     return create_success_response(
         message="Perfil actualizado exitosamente",
-        data=usuario
+        data=user_response
     )
 
 

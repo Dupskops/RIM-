@@ -16,7 +16,7 @@ import { useState } from 'react';
 import FormularioNewMoto from "@/components/formulario";
 const HomePage: React.FC = () => {
   const motosQuery = useMotos();
-  const motos = useMotoStore((s) => s.motos);
+  const { motos, selectedMoto } = useMotoStore();
 
   const hasMoto = Array.isArray(motos) && motos.length > 0;
   // botones del visor 3D (placeholders — conectar con API del visor si existe)
@@ -53,6 +53,13 @@ const HomePage: React.FC = () => {
 
             {/* Modelo 3D */}
               <div className="flex items-center justify-center p-2 relative">
+                {selectedMoto && (
+                  <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 bg-[var(--card)] px-4 py-2 rounded-full border border-[var(--accent)]/30">
+                    <div className="text-sm font-semibold text-[var(--accent)]">
+                      {selectedMoto.placa || `VIN: ${selectedMoto.vin.slice(-6)}`} • {selectedMoto.kilometraje_actual} km
+                    </div>
+                  </div>
+                )}
                 <div className="h-80 w-full max-w-3xl rounded-lg overflow-hidden shadow-2xl flex items-center justify-center bg-[rgba(255,255,255,0.02)] relative">
                   {/* Loading state */}
                   {motosQuery.isLoading ? (

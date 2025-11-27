@@ -1,9 +1,15 @@
 """
 Provider de LLM usando Ollama en contenedor Docker.
+
+MVP v2.3 - Integración completa con chatbot:
+- Métricas de tokens y tiempo de respuesta
+- Soporte para múltiples tipos de prompts
+- Configuración optimizada para Docker Compose
 """
 import json
 import logging
-from typing import AsyncGenerator, Optional, Dict, Any
+import time
+from typing import AsyncGenerator, Optional, Dict, Any, Tuple
 import aiohttp
 from aiohttp import ClientTimeout, ClientError
 
@@ -95,10 +101,13 @@ class OllamaProvider:
         system_prompt: Optional[str] = None,
         max_tokens: int = 500,
         temperature: float = 0.7,
-        context: Optional[list[int]] = None
-    ) -> str:
+        context: Optional[list[int]] = None,
+        return_metrics: bool = False
+    ) -> str | Tuple[str, Dict[str, Any]]:
         """
         Genera una respuesta completa (sin streaming).
+        
+        MVP v2.3 - Retorna métricas de generación para el chatbot.
         
         Args:
             prompt: Prompt del usuario
@@ -106,14 +115,17 @@ class OllamaProvider:
             max_tokens: Máximo de tokens a generar
             temperature: Temperatura de generación (0.0-1.0)
             context: Contexto de conversación previa (opcional)
+            return_metrics: Si True, retorna métricas (tokens, tiempo, modelo)
         
         Returns:
-            Respuesta generada como string
+            - Si return_metrics=False: str (respuesta)
+            - Si return_metrics=True: Tuple[str, Dict] (respuesta, métricas)
         
         Raises:
             aiohttp.ClientError: Si hay error de conexión
             ValueError: Si hay error en la respuesta
         """
+        start_time = time.time()
         payload: Dict[str, Any] = {
             "model": self.model_name,
             "prompt": prompt,
@@ -132,12 +144,14 @@ class OllamaProvider:
         
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                logger.info(f"Generando respuesta con {self.model_name} (max_tokens={max_tokens})")
+                logger.info(f"[DEBUG] Enviando request a Ollama: {self.base_url}/api/generate. Model: {self.model_name}")
+                req_start = time.time()
                 
                 async with session.post(
                     f"{self.base_url}/api/generate",
                     json=payload
                 ) as resp:
+                    logger.info(f"[DEBUG] Respuesta recibida de Ollama en {time.time() - req_start:.4f}s. Status: {resp.status}")
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.error(f"Error en Ollama: {resp.status} - {error_text}")
@@ -146,14 +160,32 @@ class OllamaProvider:
                     result = await resp.json()
                     response_text = result.get("response", "")
                     
-                    logger.info(f"Respuesta generada: {len(response_text)} caracteres")
-                    return response_text
+                    # Calcular métricas
+                    end_time = time.time()
+                    tiempo_respuesta_ms = int((end_time - start_time) * 1000)
+                    
+                    logger.info(f"Respuesta generada: {len(response_text)} caracteres en {tiempo_respuesta_ms}ms")
+                    
+                    # Retornar con o sin métricas
+                    if return_metrics:
+                        metrics = {
+                            "tokens_usados": result.get("eval_count", 0),  # Tokens generados
+                            "tokens_prompt": result.get("prompt_eval_count", 0),  # Tokens del prompt
+                            "tiempo_respuesta_ms": tiempo_respuesta_ms,
+                            "modelo_usado": result.get("model", self.model_name),
+                            "total_duration_ns": result.get("total_duration", 0),  # Duración total en nanosegundos
+                        }
+                        return response_text, metrics
+                    else:
+                        return response_text
                     
         except ClientError as e:
             logger.error(f"Error de conexión con Ollama: {e}")
             raise
         except Exception as e:
+            import traceback
             logger.error(f"Error inesperado generando respuesta: {e}")
+            logger.error(f"Traceback completo: {traceback.format_exc()}")
             raise
     
     async def generate_stream(
@@ -162,10 +194,13 @@ class OllamaProvider:
         system_prompt: Optional[str] = None,
         max_tokens: int = 500,
         temperature: float = 0.7,
-        context: Optional[list[int]] = None
-    ) -> AsyncGenerator[str, None]:
+        context: Optional[list[int]] = None,
+        return_metrics: bool = False
+    ) -> AsyncGenerator[str | Dict[str, Any], None]:
         """
         Genera una respuesta con streaming (chunks en tiempo real).
+        
+        MVP v2.3 - Retorna métricas al final del stream como último elemento.
         
         Args:
             prompt: Prompt del usuario
@@ -173,14 +208,17 @@ class OllamaProvider:
             max_tokens: Máximo de tokens a generar
             temperature: Temperatura de generación (0.0-1.0)
             context: Contexto de conversación previa (opcional)
+            return_metrics: Si True, el último yield será un dict con métricas
         
         Yields:
-            Chunks de texto de la respuesta
+            - Chunks de texto (str) durante el stream
+            - Dict con métricas al final si return_metrics=True
         
         Raises:
             aiohttp.ClientError: Si hay error de conexión
             ValueError: Si hay error en la respuesta
         """
+        start_time = time.time()
         payload: Dict[str, Any] = {
             "model": self.model_name,
             "prompt": prompt,
@@ -196,6 +234,10 @@ class OllamaProvider:
         
         if context:
             payload["context"] = context
+        
+        # Variables para acumular métricas
+        total_chars = 0
+        last_data = None
         
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
@@ -220,16 +262,31 @@ class OllamaProvider:
                                 if "response" in data:
                                     chunk = data["response"]
                                     if chunk:  # Solo yield si hay contenido
+                                        total_chars += len(chunk)
                                         yield chunk
                                 
-                                # Verificar si es el último chunk
+                                # Verificar si es el último chunk (contiene métricas)
                                 if data.get("done", False):
-                                    logger.info("Stream completado")
+                                    last_data = data  # Guardar para métricas
+                                    logger.info(f"Stream completado: {total_chars} caracteres")
                                     break
                                     
                             except json.JSONDecodeError:
                                 logger.warning(f"No se pudo decodificar línea: {line}")
                                 continue
+                    
+                    # Enviar métricas al final si se solicitaron
+                    if return_metrics and last_data:
+                        end_time = time.time()
+                        metrics = {
+                            "tokens_usados": last_data.get("eval_count", 0),
+                            "tokens_prompt": last_data.get("prompt_eval_count", 0),
+                            "tiempo_respuesta_ms": int((end_time - start_time) * 1000),
+                            "modelo_usado": last_data.get("model", self.model_name),
+                            "total_duration_ns": last_data.get("total_duration", 0),
+                            "caracteres_generados": total_chars,
+                        }
+                        yield metrics  # Último yield es un dict con métricas
                     
         except ClientError as e:
             logger.error(f"Error de conexión con Ollama stream: {e}")
@@ -377,8 +434,10 @@ def get_llm_provider() -> OllamaProvider:
     global _ollama_provider
     
     if _ollama_provider is None:
-        _ollama_provider = OllamaProvider()
-        logger.info("Instancia singleton de OllamaProvider creada")
+        from src.config.settings import settings
+        timeout = getattr(settings, 'OLLAMA_TIMEOUT', 180)
+        _ollama_provider = OllamaProvider(timeout=timeout)
+        logger.info(f"Instancia singleton de OllamaProvider creada con timeout={timeout}s")
     
     return _ollama_provider
 

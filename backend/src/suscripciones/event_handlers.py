@@ -1,99 +1,89 @@
 """
-Event handlers del módulo de suscripciones.
-Escucha eventos de otros módulos y reacciona automáticamente.
+Event handlers para el módulo de suscripciones (v2.3 Freemium).
 """
 import logging
-from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
 
-from src.shared.event_bus import event_bus
 from src.auth.events import UserRegisteredEvent
-from .models import Suscripcion
-from .repositories import SuscripcionRepository
-from .services import SuscripcionService
-from .events import emit_suscripcion_created
 from src.config.database import AsyncSessionLocal
+from src.shared.event_bus import event_bus
+
+from .events import emit_suscripcion_created
+from .repositories import PlanesRepository, SuscripcionRepository
+from .services import SuscripcionService
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_user_registered(event: UserRegisteredEvent) -> None:
     """
-    Handler que escucha cuando un usuario se registra.
-    Crea automáticamente una suscripción Freemium para el nuevo usuario.
+    Crea una suscripción FREE cuando un usuario se registra.
     
     Args:
-        event: Evento de usuario registrado
+        event: Evento de usuario registrado (from auth.events)
     """
-    logger.info(
-        f"📢 Evento recibido: Usuario registrado - "
-        f"ID: {event.user_id}, Email: {event.email}"
-    )
-    
+    # Convertir user_id (string) a int
     try:
-        # Convertir user_id de string a int (viene como string desde JWT)
         usuario_id = int(event.user_id)
-        
-        # Crear sesión de base de datos independiente
-        async with AsyncSessionLocal() as session:
-            repo = SuscripcionRepository(session)
-            service = SuscripcionService()
+    except (ValueError, TypeError) as e:
+        logger.error(f"[handle_user_registered] Error al convertir user_id '{event.user_id}' a int: {e}")
+        return
+    
+    logger.info(f"[handle_user_registered] Creando suscripción FREE para usuario {usuario_id} ({event.email})")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            # Repositorios
+            suscripcion_repo = SuscripcionRepository(session)
+            planes_repo = PlanesRepository(session)
             
-            # Verificar que no tenga suscripción (por si acaso)
-            existing = await repo.get_active_by_usuario(usuario_id)
+            # Servicios
+            suscripcion_service = SuscripcionService(session)
+            
+            # 1. Verificar si el usuario ya tiene una suscripción
+            existing = await suscripcion_repo.get_by_usuario_id(usuario_id)
             if existing:
-                logger.warning(
-                    f"⚠️ Usuario {usuario_id} ya tiene suscripción activa. "
-                    f"No se crea suscripción Freemium."
-                )
+                logger.info(f"[handle_user_registered] Usuario {usuario_id} ya tiene suscripción. ID: {existing.id}")
                 return
             
-            # Preparar datos de suscripción Freemium
-            suscripcion_data = service.prepare_suscripcion_data(
-                usuario_id=usuario_id,  # Ahora es int
-                plan="freemium",
-                duracion_meses=None,  # Freemium es indefinido
-                precio=0.0,
-                metodo_pago="none",
-                transaction_id=None,
-                auto_renovacion=False,
-                notas=f"Suscripción Freemium creada automáticamente al registrar usuario {event.nombre}"
+            # 2. Obtener plan FREE desde la base de datos
+            plan_free = await planes_repo.get_plan_by_nombre("FREE")
+            if not plan_free:
+                logger.error("[handle_user_registered] Plan FREE no encontrado en la base de datos. Verificar seed data.")
+                raise ValueError("Plan FREE no encontrado. Ejecutar seed data.")
+            
+            # 3. Crear suscripción usando el servicio genérico
+            suscripcion = await suscripcion_service.cambiar_plan(
+                usuario_id=usuario_id,
+                nuevo_plan_id=plan_free.id
             )
             
-            # Crear suscripción
-            suscripcion = await repo.create(suscripcion_data)
             await session.commit()
             
             logger.info(
-                f"✅ Suscripción Freemium creada automáticamente - "
-                f"Usuario: {event.email}, Suscripción ID: {suscripcion.id}"
+                f"[handle_user_registered] Suscripción FREE creada exitosamente. "
+                f"Usuario: {usuario_id}, Suscripción ID: {suscripcion.id}"
             )
             
-            # Emitir evento de suscripción creada
+            # 4. Emitir evento de suscripción creada
             await emit_suscripcion_created(
                 suscripcion_id=suscripcion.id,
-                usuario_id=str(suscripcion.usuario_id),  # Convertir a string
-                plan=suscripcion.plan,
-                precio=float(suscripcion.precio) if suscripcion.precio else None
+                usuario_id=usuario_id,
+                plan_nombre=plan_free.nombre_plan,
+                plan_id=plan_free.id,
             )
             
-    except Exception as e:
-        logger.error(
-            f"❌ Error al crear suscripción Freemium para usuario {event.user_id}: {e}",
-            exc_info=True
-        )
-        # No lanzamos la excepción para no afectar el registro del usuario
+        except Exception as e:
+            logger.error(
+                f"[handle_user_registered] Error al crear suscripción para usuario {usuario_id}: {e}",
+                exc_info=True
+            )
+            await session.rollback()
+            raise
 
 
-def register_event_handlers():
+def register_event_handlers() -> None:
     """
-    Registra todos los event handlers de suscripciones.
-    
-    Esta función debe ser llamada al iniciar la aplicación (en main.py)
-    para que los handlers queden suscritos a los eventos.
+    Registra los manejadores de eventos del módulo de suscripciones.
     """
-    # Suscribir handler de usuario registrado
     event_bus.subscribe_async(UserRegisteredEvent, handle_user_registered)
-    
-    logger.info("✅ Event handlers de suscripciones registrados")
-    logger.info("   - UserRegisteredEvent → handle_user_registered")
+    logger.info("[register_event_handlers] Suscripciones: Manejadores de eventos registrados.")

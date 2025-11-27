@@ -52,8 +52,23 @@ export const authService = {
   /**
    * Cerrar sesión
    */
-  logout(): void {
-    clearAuthTokens();
+  async logout(): Promise<void> {
+    const refreshToken = getRefreshToken();
+
+    try {
+      // Intentar cerrar sesión en el backend
+      if (refreshToken) {
+        await apiClient.post(API_ENDPOINTS.AUTH.LOGOUT, {
+          refresh_token: refreshToken,
+        });
+      }
+    } catch (error) {
+      // Ignorar errores del backend, limpiar tokens de todas formas
+      console.error('Error al cerrar sesión en el backend:', error);
+    } finally {
+      // Siempre limpiar tokens locales
+      clearAuthTokens();
+    }
   },
 
   /**

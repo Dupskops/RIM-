@@ -2,11 +2,9 @@
 Eventos del módulo de mantenimiento.
 """
 from dataclasses import dataclass
-from datetime import datetime, date
 from typing import Optional
 
 from src.shared.event_bus import Event
-from src.shared.constants import TipoMantenimiento, EstadoMantenimiento
 
 
 @dataclass
@@ -90,3 +88,12 @@ class AlertaMantenimientoProximoEvent(Event):
     fecha_programada: str = ""
     descripcion: str = ""
     es_urgente: bool = False
+
+@dataclass
+class MantenimientoCanceladoEvent(Event):
+    """Evento emitido cuando se cancela un mantenimiento."""
+    mantenimiento_id: int = 0
+    moto_id: int = 0
+    tipo: str = ""
+    motivo_cancelacion: str = ""
+    fecha_cancelacion: str = ""

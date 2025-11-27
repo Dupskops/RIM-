@@ -1,171 +1,283 @@
 """
-Schemas Pydantic para sensores (DTOs).
+Schemas Pydantic para el módulo de sensores.
+
+DTOs para API REST y WebSocket:
+- Templates: SensorTemplateCreate, SensorTemplateUpdate, SensorTemplateRead
+- Sensores: CreateSensorRequest, UpdateSensorRequest, SensorRead
+- Lecturas: CreateLecturaRequest, LecturaRead
+- Filtros y respuestas: SensorFilters, LecturaFilters, SensorStatsResponse
 """
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Dict, Any
+from uuid import UUID
+from pydantic import BaseModel, Field, ConfigDict
 
-from src.shared.base_models import FilterParams
-from .models import EstadoSensor
-from .validators import (
-    validate_tipo_sensor,
-    validate_codigo_sensor,
-    validate_frecuencia_lectura,
-    validate_umbrales,
-    validate_valor_sensor,
-    validate_timestamp_lectura
-)
+from .models import SensorState
+from ..motos.models import EstadoSalud
 
 
-# ==================== REQUEST SCHEMAS ====================
+# ============================================
+# SENSOR TEMPLATES
+# ============================================
+
+class SensorTemplateCreate(BaseModel):
+    """Request para crear plantilla de sensor."""
+    modelo: str = Field(..., max_length=128, description="Modelo de moto")
+    name: str = Field(..., max_length=128, description="Nombre descriptivo del sensor")
+    definition: Dict[str, Any] = Field(
+        ...,
+        description="Definición JSONB con sensor_type, unit, thresholds, frequency_ms, component_type"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "modelo": "Ducati Panigale V4",
+                "name": "Temperatura Motor",
+                "definition": {
+                    "sensor_type": "temperature",
+                    "unit": "celsius",
+                    "default_thresholds": {"min": 0, "max": 120},
+                    "frequency_ms": 1000,
+                    "component_type": "engine"
+                }
+            }
+        }
+    )
+
+
+class SensorTemplateUpdate(BaseModel):
+    """Request para actualizar plantilla de sensor."""
+    name: Optional[str] = Field(None, max_length=128)
+    definition: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Temp Motor (Actualizado)",
+                "definition": {
+                    "sensor_type": "temperature",
+                    "unit": "celsius",
+                    "default_thresholds": {"min": 10, "max": 110},
+                    "frequency_ms": 500,
+                    "component_type": "engine"
+                }
+            }
+        }
+    )
+
+
+class SensorTemplateRead(BaseModel):
+    """Response con plantilla de sensor."""
+    id: UUID
+    modelo: str
+    name: str
+    definition: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================
+# SENSORES
+# ============================================
 
 class CreateSensorRequest(BaseModel):
-    """Request para crear un sensor."""
-    
-    moto_id: int = Field(..., description="ID de la moto")
-    tipo: str = Field(..., description="Tipo de sensor")
-    codigo: str = Field(..., description="Código único del sensor")
-    nombre: Optional[str] = Field(None, description="Nombre del sensor")
-    ubicacion: Optional[str] = Field(None, description="Ubicación física")
-    frecuencia_lectura: int = Field(5, ge=1, le=3600, description="Frecuencia en segundos")
-    umbral_min: Optional[float] = Field(None, description="Umbral mínimo")
-    umbral_max: Optional[float] = Field(None, description="Umbral máximo")
-    fabricante: Optional[str] = Field(None, description="Fabricante")
-    modelo: Optional[str] = Field(None, description="Modelo")
-    version_firmware: Optional[str] = Field(None, description="Versión del firmware")
-    notas: Optional[str] = Field(None, description="Notas")
-    
-    @field_validator("tipo")
-    @classmethod
-    def validate_tipo_field(cls, v: str) -> str:
-        is_valid, error_msg = validate_tipo_sensor(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("codigo")
-    @classmethod
-    def validate_codigo_field(cls, v: str) -> str:
-        is_valid, error_msg = validate_codigo_sensor(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-    
-    @field_validator("frecuencia_lectura")
-    @classmethod
-    def validate_frecuencia_field(cls, v: int) -> int:
-        is_valid, error_msg = validate_frecuencia_lectura(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
+    """Request para registrar sensor manualmente."""
+    moto_id: int = Field(..., description="ID de la moto (int FK)")
+    template_id: Optional[UUID] = Field(None, description="Plantilla base (opcional)")
+    nombre: Optional[str] = Field(None, max_length=128, description="Nombre descriptivo")
+    tipo: str = Field(..., max_length=64, description="Tipo de sensor (temperature, pressure, etc)")
+    componente_id: Optional[int] = Field(None, description="Componente físico asociado (int FK)")  # CORREGIDO: int, no UUID
+    config: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Configuración personalizada (thresholds, calibration)"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "moto_id": 1,
+                "template_id": "223e4567-e89b-12d3-a456-426614174111",
+                "nombre": "Temp Motor Principal",
+                "tipo": "temperature",
+                "componente_id": 1,  # int, no UUID
+                "config": {
+                    "thresholds": {"min": 20, "max": 100},
+                    "calibration_offset": 0.5,
+                    "enabled": True
+                }
+            }
+        }
+    )
 
 
 class UpdateSensorRequest(BaseModel):
-    """Request para actualizar un sensor."""
-    
-    nombre: Optional[str] = None
-    ubicacion: Optional[str] = None
-    estado: Optional[str] = None
-    frecuencia_lectura: Optional[int] = Field(None, ge=1, le=3600)
-    umbral_min: Optional[float] = None
-    umbral_max: Optional[float] = None
-    version_firmware: Optional[str] = None
-    notas: Optional[str] = None
+    """Request para actualizar sensor."""
+    nombre: Optional[str] = Field(None, max_length=128)
+    sensor_state: Optional[SensorState] = None
+    config: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "nombre": "Temp Motor Principal (Calibrado)",
+                "sensor_state": "ok",
+                "config": {
+                    "thresholds": {"min": 15, "max": 105},
+                    "calibration_offset": 0.3,
+                    "enabled": True
+                }
+            }
+        }
+    )
 
 
-class CreateLecturaRequest(BaseModel):
-    """Request para registrar una lectura de sensor."""
-    
-    sensor_id: int = Field(..., description="ID del sensor")
-    valor: float = Field(..., description="Valor de la lectura")
-    timestamp_lectura: datetime = Field(..., description="Timestamp de la lectura")
-    metadata_json: Optional[str] = Field(None, description="Metadata adicional (JSON)")
-    
-    @field_validator("timestamp_lectura")
-    @classmethod
-    def validate_timestamp_field(cls, v: datetime) -> datetime:
-        is_valid, error_msg = validate_timestamp_lectura(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class SensorFilterParams(FilterParams):
-    """Parámetros de filtrado para sensores."""
-    
-    moto_id: Optional[int] = Field(None, description="Filtrar por moto")
-    tipo: Optional[str] = Field(None, description="Filtrar por tipo de sensor")
-    estado: Optional[str] = Field(None, description="Filtrar por estado")
-    
-    # Hereda de FilterParams:
-    # - search: Optional[str]
-    # - created_after: Optional[datetime]
-    # - created_before: Optional[datetime]
-
-
-class LecturaFilterParams(FilterParams):
-    """Parámetros de filtrado para lecturas de sensores."""
-    
-    sensor_id: Optional[int] = Field(None, description="Filtrar por sensor")
-    moto_id: Optional[int] = Field(None, description="Filtrar por moto")
-    fecha_inicio: Optional[datetime] = Field(None, description="Fecha inicio")
-    fecha_fin: Optional[datetime] = Field(None, description="Fecha fin")
-    fuera_rango: Optional[bool] = Field(None, description="Solo lecturas fuera de rango")
-    
-    # Hereda de FilterParams:
-    # - search: Optional[str]
-    # - created_after: Optional[datetime]
-    # - created_before: Optional[datetime]
-
-
-# ==================== RESPONSE SCHEMAS ====================
-
-class SensorResponse(BaseModel):
-    """Response con datos de sensor."""
-    
-    id: int
+class SensorRead(BaseModel):
+    """Response con sensor."""
+    id: UUID
     moto_id: int
-    tipo: str
-    codigo: str
+    template_id: Optional[UUID]
     nombre: Optional[str]
-    ubicacion: Optional[str]
-    estado: str
-    frecuencia_lectura: int
-    umbral_min: Optional[float]
-    umbral_max: Optional[float]
-    fabricante: Optional[str]
-    modelo: Optional[str]
-    version_firmware: Optional[str]
-    ultima_lectura: Optional[datetime]
-    ultima_calibracion: Optional[datetime]
+    tipo: str
+    componente_id: Optional[int]  # CORREGIDO: int, no UUID
+    config: Dict[str, Any]
+    sensor_state: SensorState
+    last_value: Optional[Dict[str, Any]]
+    last_seen: Optional[datetime]
     created_at: datetime
     updated_at: datetime
-    
-    model_config = {"from_attributes": True}
+
+    model_config = ConfigDict(from_attributes=True)
 
 
-class LecturaSensorResponse(BaseModel):
-    """Response con datos de lectura."""
-    
+# ============================================
+# LECTURAS
+# ============================================
+
+class CreateLecturaRequest(BaseModel):
+    """Request para registrar lectura de sensor."""
+    sensor_id: UUID
+    ts: datetime = Field(..., description="Timestamp de la lectura")
+    valor: Dict[str, Any] = Field(
+        ...,
+        description="Valor JSONB con value, unit, raw (opcional)"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Metadata adicional: quality, anomaly_score, source"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "sensor_id": "423e4567-e89b-12d3-a456-426614174333",
+                "ts": "2025-10-26T10:30:00Z",
+                "valor": {
+                    "value": 78.5,
+                    "unit": "celsius",
+                    "raw": 785
+                },
+                "metadata": {
+                    "quality": 0.99,
+                    "anomaly_score": 0.02,
+                    "source": "websocket"
+                }
+            }
+        }
+    )
+
+
+class LecturaRead(BaseModel):
+    """Response con lectura."""
     id: int
-    sensor_id: int
-    valor: float
-    unidad: str
-    timestamp_lectura: datetime
-    fuera_rango: bool
-    alerta_generada: bool
+    moto_id: int
+    sensor_id: UUID
+    componente_id: Optional[int]  # CORREGIDO: int, no UUID
+    ts: datetime
+    valor: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]]
     created_at: datetime
-    
-    model_config = {"from_attributes": True}
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================
+# FILTROS
+# ============================================
+
+class SensorFilters(BaseModel):
+    """Filtros para listar sensores."""
+    moto_id: Optional[int] = None
+    tipo: Optional[str] = None
+    sensor_state: Optional[SensorState] = None
+    componente_id: Optional[int] = None  # CORREGIDO: int, no UUID
+
+
+class LecturaFilters(BaseModel):
+    """Filtros para listar lecturas."""
+    moto_id: Optional[int] = None
+    sensor_id: Optional[UUID] = None
+    componente_id: Optional[int] = None  # CORREGIDO: int, no UUID
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+
+# ============================================
+# RESPONSES
+# ============================================
 
 class SensorStatsResponse(BaseModel):
-    """Response con estadísticas de sensores."""
-    
-    total_sensores: int
-    sensores_activos: int
-    sensores_inactivos: int
-    sensores_con_error: int
-    lecturas_hoy: int
-    alertas_hoy: int
-    ultimas_lecturas: list[LecturaSensorResponse]
+    """Estadísticas de sensores por estado."""
+    total: int = Field(..., description="Total de sensores")
+    ok: int = Field(default=0, description="Sensores en estado OK")
+    degraded: int = Field(default=0, description="Sensores degradados")
+    faulty: int = Field(default=0, description="Sensores con fallas")
+    offline: int = Field(default=0, description="Sensores offline")
+    unknown: int = Field(default=0, description="Sensores en estado desconocido")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total": 12,
+                "ok": 10,
+                "degraded": 1,
+                "faulty": 0,
+                "offline": 1,
+                "unknown": 0
+            }
+        }
+    )
+
+
+class ComponentStateResponse(BaseModel):
+    """Response de estado de componente."""
+    componente_id: int  # CORREGIDO: componentes.id es SERIAL (int) según DDL v2.3
+    moto_id: int
+    tipo: str
+    nombre: Optional[str]
+    component_state: EstadoSalud
+    sensor_count: int
+    last_updated: Optional[datetime]
+    aggregation_data: Dict[str, Any]
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "componente_id": 1,  # int, no UUID
+                "moto_id": 1,
+                "tipo": "engine",
+                "nombre": "Motor Principal",
+                "component_state": "ok",
+                "sensor_count": 3,
+                "last_updated": "2025-10-26T10:30:00Z",
+                "aggregation_data": {
+                    "max_sensor_score": 0,
+                    "sensor_states": {"ok": 3},
+                    "anomaly_count": 0
+                }
+            }
+        }
+    )

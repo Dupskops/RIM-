@@ -166,6 +166,70 @@ async def get_optional_user(
         return None
 
 
+async def get_current_user_ws(
+    token: str,
+    db: AsyncSession
+):
+    """
+    Obtiene el usuario autenticado desde un WebSocket usando JWT.
+    
+    Esta función es para uso en WebSocket endpoints donde el token
+    viene como query parameter en lugar de header.
+    
+    Args:
+        token: Token JWT desde query param
+        db: Sesión de base de datos
+        
+    Returns:
+        Usuario autenticado
+        
+    Raises:
+        UnauthorizedException: Si el token es inválido o el usuario no existe
+        
+    Uso en WebSocket:
+        @router.websocket("/ws/endpoint")
+        async def websocket_endpoint(
+            websocket: WebSocket,
+            token: str = Query(...),
+            db: AsyncSession = Depends(get_db)
+        ):
+            try:
+                user = await get_current_user_ws(token, db)
+                await websocket.accept()
+                # ... resto del código
+            except UnauthorizedException:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    """
+    if not token:
+        raise UnauthorizedException("Token de autenticación requerido")
+    
+    # Decodificar y validar token
+    payload = await decode_token(token)
+    user_id = payload.get("sub")
+    
+    if not user_id:
+        raise UnauthorizedException("Token inválido: falta user_id")
+    
+    # Convertir user_id de string (JWT) a int (DB)
+    try:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
+        raise UnauthorizedException("ID de usuario inválido")
+    
+    # Obtener usuario de la BD
+    from ..usuarios.repositories import UsuarioRepository
+    repo = UsuarioRepository(db)
+    user = await repo.get_by_id(user_id_int)
+    
+    if not user:
+        raise UnauthorizedException("Usuario no encontrado")
+    
+    if not user.activo:
+        raise UnauthorizedException("Cuenta desactivada")
+    
+    return user
+
+
 # ============================================
 # AUTORIZACIÓN POR ROLES
 # ============================================

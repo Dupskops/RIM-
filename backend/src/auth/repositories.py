@@ -6,7 +6,7 @@ from typing import Optional, List
 from sqlalchemy import select, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from .models import Usuario, RefreshToken, PasswordResetToken, EmailVerificationToken
@@ -33,7 +33,7 @@ class UsuarioRepository:
         await self.session.refresh(usuario)
         return usuario
 
-   #Cambie el get_by_id - Usuario.id == user_id) para hacer la conversion a INT 
+    #Cambie el get_by_id - Usuario.id == user_id) para hacer la conversion a INT 
     async def get_by_id(self, user_id: str | int) -> Optional[Usuario]:
         """Obtiene usuario por ID."""
         try:   
@@ -86,7 +86,7 @@ class UsuarioRepository:
         await self.session.execute(
             update(Usuario)
             .where(Usuario.id == user_id)
-            .values(ultimo_login=datetime.utcnow())
+            .values(ultimo_login=datetime.now(timezone.utc))
         )
         await self.session.commit()
     #Coloque user_id por int(user_id)
@@ -177,7 +177,7 @@ class RefreshTokenRepository:
         await self.session.execute(
             update(RefreshToken)
             .where(RefreshToken.token == token)
-            .values(revocado=True, revocado_at=datetime.utcnow())
+            .values(revocado=True, revocado_at=datetime.now(timezone.utc))
         )
         await self.session.commit()
     
@@ -186,7 +186,7 @@ class RefreshTokenRepository:
         await self.session.execute(
             update(RefreshToken)
             .where(RefreshToken.usuario_id == user_id)
-            .values(revocado=True, revocado_at=datetime.utcnow())
+            .values(revocado=True, revocado_at=datetime.now(timezone.utc))
         )
         await self.session.commit()
     
@@ -194,7 +194,7 @@ class RefreshTokenRepository:
         """Elimina tokens expirados. Retorna cantidad eliminada."""
         result = await self.session.execute(
             delete(RefreshToken)
-            .where(RefreshToken.expires_at < datetime.utcnow())
+            .where(RefreshToken.expires_at < datetime.now(timezone.utc))
         )
         await self.session.commit()
         return result.rowcount
@@ -225,7 +225,7 @@ class PasswordResetTokenRepository:
         await self.session.execute(
             update(PasswordResetToken)
             .where(PasswordResetToken.token == token)
-            .values(usado=True, usado_at=datetime.utcnow())
+            .values(usado=True, usado_at=datetime.now(timezone.utc))
         )
         await self.session.commit()
     
@@ -233,7 +233,7 @@ class PasswordResetTokenRepository:
         """Elimina tokens expirados."""
         result = await self.session.execute(
             delete(PasswordResetToken)
-            .where(PasswordResetToken.expires_at < datetime.utcnow())
+            .where(PasswordResetToken.expires_at < datetime.now(timezone.utc))
         )
         await self.session.commit()
         return result.rowcount
@@ -265,7 +265,7 @@ class EmailVerificationTokenRepository:
         await self.session.execute(
             update(EmailVerificationToken)
             .where(EmailVerificationToken.token == token)
-            .values(usado=True, usado_at=datetime.utcnow())
+            .values(usado=True, usado_at=datetime.now(timezone.utc))
         )
         await self.session.commit()
     
@@ -273,7 +273,7 @@ class EmailVerificationTokenRepository:
         """Elimina tokens expirados."""
         result = await self.session.execute(
             delete(EmailVerificationToken)
-            .where(EmailVerificationToken.expires_at < datetime.utcnow())
+            .where(EmailVerificationToken.expires_at < datetime.now(timezone.utc))
         )
         await self.session.commit()
         return result.rowcount

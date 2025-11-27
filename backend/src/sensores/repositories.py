@@ -1,277 +1,530 @@
 """
-Repositorios para sensores (acceso a datos).
+Repositorios para acceso a datos del módulo de sensores.
+
+Capa de acceso a datos con operaciones CRUD y consultas específicas:
+- SensorTemplateRepository: CRUD de plantillas
+- SensorRepository: Gestión de sensores instanciados
+- MotoComponenteRepository: Gestión de componentes físicos
+- LecturaRepository: Persistencia y consultas de telemetría
+
+Incluye logging y manejo robusto de errores.
 """
-from typing import Optional, List
-from sqlalchemy import select, func, and_, or_, desc
+import logging
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Optional, List, Dict, Any
+from uuid import UUID
+from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
+from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import SQLAlchemyError
 
-from .models import Sensor, LecturaSensor, EstadoSensor
+from .models import SensorTemplate, Sensor, Lectura, SensorState
+from ..motos.models import Componente, EstadoSalud, EstadoActual
+
+logger = logging.getLogger(__name__)
 
 
-class SensorRepository:
-    """Repositorio para gestionar sensores."""
-    
+# ============================================
+# SENSOR TEMPLATE REPOSITORY
+# ============================================
+
+class SensorTemplateRepository:
+    """Repositorio para plantillas de sensores."""
+
     def __init__(self, session: AsyncSession):
         self.session = session
-    
-    async def create(self, sensor_data: dict) -> Sensor:
-        """Crea un nuevo sensor."""
-        sensor = Sensor(**sensor_data)
-        self.session.add(sensor)
-        await self.session.commit()
-        await self.session.refresh(sensor)
-        return sensor
-    
-    async def get_by_id(self, sensor_id: int) -> Optional[Sensor]:
-        """Obtiene un sensor por ID."""
-        query = select(Sensor).where(
-            Sensor.id == sensor_id,
-            Sensor.deleted_at.is_(None)
+
+    async def create(self, template_data: Dict[str, Any]) -> SensorTemplate:
+        """Crear nueva plantilla de sensor."""
+        template = SensorTemplate(**template_data)
+        self.session.add(template)
+        await self.session.flush()
+        await self.session.refresh(template)
+        return template
+
+    async def get_by_id(self, template_id: UUID) -> Optional[SensorTemplate]:
+        """Obtener plantilla por ID."""
+        result = await self.session.execute(
+            select(SensorTemplate).where(SensorTemplate.id == template_id)
         )
-        result = await self.session.execute(query)
         return result.scalar_one_or_none()
-    
-    async def get_by_codigo(self, codigo: str) -> Optional[Sensor]:
-        """Obtiene un sensor por código."""
-        query = select(Sensor).where(
-            Sensor.codigo == codigo,
-            Sensor.deleted_at.is_(None)
+
+    async def get_by_modelo(self, modelo: str) -> List[SensorTemplate]:
+        """Obtener todas las plantillas para un modelo de moto."""
+        result = await self.session.execute(
+            select(SensorTemplate)
+            .where(SensorTemplate.modelo == modelo)
+            .order_by(SensorTemplate.name)
         )
+        return list(result.scalars().all())
+
+    async def list_all(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        modelo: Optional[str] = None
+    ) -> List[SensorTemplate]:
+        """Listar plantillas con filtros opcionales."""
+        query = select(SensorTemplate)
+        
+        if modelo:
+            query = query.where(SensorTemplate.modelo == modelo)
+        
+        query = query.order_by(SensorTemplate.modelo, SensorTemplate.name)
+        query = query.offset(skip).limit(limit)
+        
         result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def count(self, modelo: Optional[str] = None) -> int:
+        """Contar plantillas."""
+        query = select(func.count(SensorTemplate.id))
+        
+        if modelo:
+            query = query.where(SensorTemplate.modelo == modelo)
+        
+        result = await self.session.execute(query)
+        return result.scalar_one()
+
+    async def update(self, template_id: UUID, update_data: Dict[str, Any]) -> Optional[SensorTemplate]:
+        """Actualizar plantilla."""
+        template = await self.get_by_id(template_id)
+        if not template:
+            return None
+        
+        for key, value in update_data.items():
+            if value is not None and hasattr(template, key):
+                setattr(template, key, value)
+        
+        await self.session.flush()
+        await self.session.refresh(template)
+        return template
+
+    async def delete(self, template_id: UUID) -> bool:
+        """Eliminar plantilla."""
+        result = await self.session.execute(
+            delete(SensorTemplate).where(SensorTemplate.id == template_id)
+        )
+        return result.rowcount > 0
+
+
+# ============================================
+# MOTO COMPONENTE REPOSITORY
+# ============================================
+
+class MotoComponenteRepository:
+    """Repositorio para componentes físicos de motos."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, componente_data: Dict[str, Any]) -> Componente:
+        """Crear nuevo componente."""
+        componente = Componente(**componente_data)
+        self.session.add(componente)
+        await self.session.flush()
+        await self.session.refresh(componente)
+        return componente
+
+    async def get_by_id(self, componente_id: int) -> Optional[Componente]:
+        """
+        Obtener componente por ID.
+        
+        NOTA: Componentes son definiciones por modelo de moto (no por moto individual).
+        No tienen relación directa con sensores en el modelo v2.3.
+        """
+        result = await self.session.execute(
+            select(Componente).where(Componente.id == componente_id)
+        )
         return result.scalar_one_or_none()
-    
-    async def list_by_moto(
+
+    async def get_by_modelo(self, modelo_moto_id: int) -> List[Componente]:
+        """Obtener todos los componentes de un modelo de moto."""
+        result = await self.session.execute(
+            select(Componente)
+            .where(Componente.modelo_moto_id == modelo_moto_id)
+            .order_by(Componente.nombre)
+        )
+        return list(result.scalars().all())
+
+    async def update_state(
         self,
         moto_id: int,
-        tipo: Optional[str] = None,
-        estado: Optional[str] = None
-    ) -> List[Sensor]:
-        """Lista sensores de una moto con filtros."""
-        query = select(Sensor).where(
-            Sensor.moto_id == moto_id,
-            Sensor.deleted_at.is_(None)
+        componente_id: int,  # CORREGIDO: componentes.id es SERIAL (int) según DDL v2.3
+        new_state: EstadoSalud,
+        ultimo_valor: Optional[float] = None
+    ) -> Optional[EstadoActual]:
+        """
+        Actualizar estado de componente en estado_actual.
+        
+        Args:
+            moto_id: ID de la moto
+            componente_id: ID del componente
+            new_state: Nuevo estado de salud
+            ultimo_valor: Último valor medido (opcional)
+            
+        Returns:
+            EstadoActual actualizado o None si no existe
+            
+        Note:
+            Esta función actualiza la tabla estado_actual, NO la tabla componentes.
+            El estado es específico por moto-componente (tabla con UNIQUE constraint).
+        """
+        try:
+            # Buscar estado actual existente
+            result = await self.session.execute(
+                select(EstadoActual)
+                .where(
+                    and_(
+                        EstadoActual.moto_id == moto_id,
+                        EstadoActual.componente_id == componente_id
+                    )
+                )
+            )
+            estado_actual = result.scalar_one_or_none()
+            
+            if not estado_actual:
+                logger.warning(f"Estado actual no encontrado para moto_id={moto_id}, componente_id={componente_id}")
+                return None
+            
+            # Actualizar estado
+            estado_actual.estado = new_state
+            estado_actual.ultima_actualizacion = datetime.now(timezone.utc)
+            if ultimo_valor is not None:
+                estado_actual.ultimo_valor = Decimal(str(ultimo_valor))
+            
+            await self.session.flush()
+            await self.session.refresh(estado_actual)
+            logger.info(f"Estado actualizado: moto_id={moto_id}, componente_id={componente_id}, estado={new_state.value}")
+            return estado_actual
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Error actualizando estado: moto_id={moto_id}, componente_id={componente_id}: {e}")
+            raise
+
+    async def delete(self, componente_id: int) -> bool:
+        """Eliminar componente."""
+        result = await self.session.execute(
+            delete(Componente).where(Componente.id == componente_id)
         )
-        
-        if tipo:
-            query = query.where(Sensor.tipo == tipo)
-        
-        if estado:
-            query = query.where(Sensor.estado == estado)
-        
-        query = query.order_by(Sensor.created_at.desc())
-        
-        result = await self.session.execute(query)
+        return result.rowcount > 0
+
+
+# ============================================
+# SENSOR REPOSITORY
+# ============================================
+
+class SensorRepository:
+    """Repositorio para sensores instanciados."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, sensor_data: Dict[str, Any]) -> Sensor:
+        """Crear nuevo sensor."""
+        sensor = Sensor(**sensor_data)
+        self.session.add(sensor)
+        await self.session.flush()
+        await self.session.refresh(sensor)
+        return sensor
+
+    async def get_by_id(self, sensor_id: UUID) -> Optional[Sensor]:
+        """Obtener sensor por ID."""
+        result = await self.session.execute(
+            select(Sensor)
+            .options(
+                selectinload(Sensor.template),
+                selectinload(Sensor.componente)
+            )
+            .where(Sensor.id == sensor_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_moto(self, moto_id: int) -> List[Sensor]:
+        """Obtener todos los sensores de una moto."""
+        result = await self.session.execute(
+            select(Sensor)
+            .options(
+                selectinload(Sensor.template),
+                selectinload(Sensor.componente)
+            )
+            .where(Sensor.moto_id == moto_id)
+            .order_by(Sensor.tipo, Sensor.nombre)
+        )
         return list(result.scalars().all())
-    
+
     async def list_sensores(
         self,
+        skip: int = 0,
+        limit: int = 100,
         moto_id: Optional[int] = None,
         tipo: Optional[str] = None,
-        estado: Optional[str] = None,
-        skip: int = 0,
-        limit: int = 50
+        sensor_state: Optional[SensorState] = None,
+        componente_id: Optional[int] = None  # CORREGIDO: int, no UUID
     ) -> List[Sensor]:
-        """Lista sensores con paginación y filtros."""
-        query = select(Sensor).where(Sensor.deleted_at.is_(None))
+        """Listar sensores con filtros."""
+        query = select(Sensor).options(
+            selectinload(Sensor.template),
+            selectinload(Sensor.componente)
+        )
         
-        if moto_id:
-            query = query.where(Sensor.moto_id == moto_id)
-        
+        filters: List[Any] = []
+        if moto_id is not None:
+            filters.append(Sensor.moto_id == moto_id)
         if tipo:
-            query = query.where(Sensor.tipo == tipo)
+            filters.append(Sensor.tipo == tipo)
+        if sensor_state:
+            filters.append(Sensor.sensor_state == sensor_state)
+        if componente_id:
+            filters.append(Sensor.componente_id == componente_id)
         
-        if estado:
-            query = query.where(Sensor.estado == estado)
+        if filters:
+            query = query.where(and_(*filters))
         
-        query = query.order_by(Sensor.created_at.desc()).offset(skip).limit(limit)
+        query = query.order_by(Sensor.created_at.desc())
+        query = query.offset(skip).limit(limit)
         
         result = await self.session.execute(query)
         return list(result.scalars().all())
-    
+
     async def count_sensores(
         self,
         moto_id: Optional[int] = None,
         tipo: Optional[str] = None,
-        estado: Optional[str] = None
+        sensor_state: Optional[SensorState] = None
     ) -> int:
-        """Cuenta sensores con filtros."""
-        query = select(func.count(Sensor.id)).where(Sensor.deleted_at.is_(None))
+        """Contar sensores con filtros."""
+        query = select(func.count(Sensor.id))
         
-        if moto_id:
-            query = query.where(Sensor.moto_id == moto_id)
-        
+        filters: List[Any] = []
+        if moto_id is not None:
+            filters.append(Sensor.moto_id == moto_id)
         if tipo:
-            query = query.where(Sensor.tipo == tipo)
+            filters.append(Sensor.tipo == tipo)
+        if sensor_state:
+            filters.append(Sensor.sensor_state == sensor_state)
         
-        if estado:
-            query = query.where(Sensor.estado == estado)
+        if filters:
+            query = query.where(and_(*filters))
         
         result = await self.session.execute(query)
-        return result.scalar() or 0
-    
-    async def update(self, sensor: Sensor, update_data: dict) -> Sensor:
-        """Actualiza un sensor."""
+        return result.scalar_one()
+
+    async def update(self, sensor_id: UUID, update_data: Dict[str, Any]) -> Optional[Sensor]:
+        """Actualizar sensor."""
+        sensor = await self.get_by_id(sensor_id)
+        if not sensor:
+            return None
+        
         for key, value in update_data.items():
-            if hasattr(sensor, key) and value is not None:
+            if value is not None and hasattr(sensor, key):
                 setattr(sensor, key, value)
         
-        sensor.updated_at = datetime.utcnow()
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(sensor)
         return sensor
-    
-    async def delete(self, sensor: Sensor) -> None:
-        """Elimina (soft delete) un sensor."""
-        sensor.deleted_at = datetime.utcnow()
-        await self.session.commit()
-    
-    async def update_ultima_lectura(self, sensor_id: int) -> None:
-        """Actualiza el timestamp de última lectura."""
-        sensor = await self.get_by_id(sensor_id)
-        if sensor:
-            sensor.ultima_lectura = datetime.utcnow()
-            await self.session.commit()
-    
-    async def get_stats(self, moto_id: Optional[int] = None) -> dict:
-        """Obtiene estadísticas de sensores."""
-        query = select(Sensor).where(Sensor.deleted_at.is_(None))
+
+    async def update_last_seen(
+        self,
+        sensor_id: UUID,
+        last_value: Optional[Dict[str, Any]] = None
+    ) -> Optional[Sensor]:
+        """Actualizar timestamp y último valor de sensor."""
+        try:
+            sensor = await self.get_by_id(sensor_id)
+            if not sensor:
+                logger.warning(f"Sensor {sensor_id} no encontrado para actualizar last_seen")
+                return None
+            
+            sensor.last_seen = datetime.now(timezone.utc)
+            if last_value:
+                sensor.last_value = last_value
+            
+            await self.session.flush()
+            await self.session.refresh(sensor)
+            logger.debug(f"Last seen actualizado para sensor {sensor_id}")
+            return sensor
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Error actualizando last_seen de sensor {sensor_id}: {e}")
+            raise
+
+    async def delete(self, sensor_id: UUID) -> bool:
+        """Eliminar sensor."""
+        result = await self.session.execute(
+            delete(Sensor).where(Sensor.id == sensor_id)
+        )
+        return result.rowcount > 0
+
+    async def get_stats(self, moto_id: Optional[int] = None) -> Dict[str, int]:
+        """Obtener estadísticas de sensores por estado."""
+        query = select(
+            Sensor.sensor_state,
+            func.count(Sensor.id)
+        ).group_by(Sensor.sensor_state)
         
-        if moto_id:
+        if moto_id is not None:
             query = query.where(Sensor.moto_id == moto_id)
         
         result = await self.session.execute(query)
-        sensores = list(result.scalars().all())
+        stats = {state.value: 0 for state in SensorState}
         
-        return {
-            "total": len(sensores),
-            "activos": sum(1 for s in sensores if s.estado == EstadoSensor.ACTIVE),
-            "inactivos": sum(1 for s in sensores if s.estado == EstadoSensor.INACTIVE),
-            "con_error": sum(1 for s in sensores if s.estado == EstadoSensor.ERROR),
-            "en_mantenimiento": sum(1 for s in sensores if s.estado == EstadoSensor.MAINTENANCE)
-        }
+        for state, count in result:
+            stats[state.value] = count
+        
+        stats["total"] = sum(stats.values())
+        return stats
 
 
-class LecturaSensorRepository:
-    """Repositorio para gestionar lecturas de sensores."""
-    
+# ============================================
+# LECTURA REPOSITORY
+# ============================================
+
+class LecturaRepository:
+    """Repositorio para lecturas de telemetría."""
+
     def __init__(self, session: AsyncSession):
         self.session = session
-    
-    async def create(self, lectura_data: dict) -> LecturaSensor:
-        """Crea una nueva lectura."""
-        lectura = LecturaSensor(**lectura_data)
+
+    async def create(self, lectura_data: Dict[str, Any]) -> Lectura:
+        """Crear nueva lectura."""
+        lectura = Lectura(**lectura_data)
         self.session.add(lectura)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(lectura)
         return lectura
-    
-    async def get_by_id(self, lectura_id: int) -> Optional[LecturaSensor]:
-        """Obtiene una lectura por ID."""
-        query = select(LecturaSensor).where(LecturaSensor.id == lectura_id)
-        result = await self.session.execute(query)
+
+    async def batch_insert_readings(self, lecturas_data: List[Dict[str, Any]]) -> int:
+        """
+        Insertar múltiples lecturas en batch.
+        Optimizado para el worker que procesa lecturas en lotes.
+        
+        Returns:
+            Número de lecturas insertadas
+        """
+        if not lecturas_data:
+            return 0
+        
+        lecturas = [Lectura(**data) for data in lecturas_data]
+        self.session.add_all(lecturas)
+        await self.session.flush()
+        
+        return len(lecturas)
+
+    async def get_by_id(self, lectura_id: int) -> Optional[Lectura]:
+        """Obtener lectura por ID."""
+        result = await self.session.execute(
+            select(Lectura).where(Lectura.id == lectura_id)
+        )
         return result.scalar_one_or_none()
-    
-    async def get_latest_by_sensor(self, sensor_id: int) -> Optional[LecturaSensor]:
-        """Obtiene la última lectura de un sensor."""
-        query = select(LecturaSensor).where(
-            LecturaSensor.sensor_id == sensor_id
-        ).order_by(LecturaSensor.timestamp_lectura.desc()).limit(1)
+
+    async def list_by_moto(
+        self,
+        moto_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Lectura]:
+        """Listar lecturas de una moto con filtros temporales."""
+        query = select(Lectura).where(Lectura.moto_id == moto_id)
+        
+        if start_date:
+            query = query.where(Lectura.ts >= start_date)
+        if end_date:
+            query = query.where(Lectura.ts <= end_date)
+        
+        query = query.order_by(Lectura.ts.desc())
+        query = query.offset(skip).limit(limit)
         
         result = await self.session.execute(query)
-        return result.scalar_one_or_none()
-    
+        return list(result.scalars().all())
+
     async def list_by_sensor(
         self,
-        sensor_id: int,
-        fecha_inicio: Optional[datetime] = None,
-        fecha_fin: Optional[datetime] = None,
-        fuera_rango: Optional[bool] = None,
+        sensor_id: UUID,
         skip: int = 0,
-        limit: int = 100
-    ) -> List[LecturaSensor]:
-        """Lista lecturas de un sensor con filtros."""
-        query = select(LecturaSensor).where(LecturaSensor.sensor_id == sensor_id)
+        limit: int = 100,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Lectura]:
+        """Listar lecturas de un sensor con filtros temporales."""
+        query = select(Lectura).where(Lectura.sensor_id == sensor_id)
         
-        if fecha_inicio:
-            query = query.where(LecturaSensor.timestamp_lectura >= fecha_inicio)
+        if start_date:
+            query = query.where(Lectura.ts >= start_date)
+        if end_date:
+            query = query.where(Lectura.ts <= end_date)
         
-        if fecha_fin:
-            query = query.where(LecturaSensor.timestamp_lectura <= fecha_fin)
-        
-        if fuera_rango is not None:
-            query = query.where(LecturaSensor.fuera_rango == fuera_rango)
-        
-        query = query.order_by(LecturaSensor.timestamp_lectura.desc()).offset(skip).limit(limit)
+        query = query.order_by(Lectura.ts.desc())
+        query = query.offset(skip).limit(limit)
         
         result = await self.session.execute(query)
         return list(result.scalars().all())
-    
+
+    async def list_by_component(
+        self,
+        componente_id: int,  # CORREGIDO: int, no UUID
+        skip: int = 0,
+        limit: int = 100,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Lectura]:
+        """Listar lecturas de un componente con filtros temporales."""
+        query = select(Lectura).where(Lectura.componente_id == componente_id)
+        
+        if start_date:
+            query = query.where(Lectura.ts >= start_date)
+        if end_date:
+            query = query.where(Lectura.ts <= end_date)
+        
+        query = query.order_by(Lectura.ts.desc())
+        query = query.offset(skip).limit(limit)
+        
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def count_by_moto(
+        self,
+        moto_id: int,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> int:
+        """Contar lecturas de una moto."""
+        query = select(func.count(Lectura.id)).where(Lectura.moto_id == moto_id)
+        
+        if start_date:
+            query = query.where(Lectura.ts >= start_date)
+        if end_date:
+            query = query.where(Lectura.ts <= end_date)
+        
+        result = await self.session.execute(query)
+        return result.scalar_one()
+
     async def count_by_sensor(
         self,
-        sensor_id: int,
-        fecha_inicio: Optional[datetime] = None,
-        fecha_fin: Optional[datetime] = None,
-        fuera_rango: Optional[bool] = None
+        sensor_id: UUID,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> int:
-        """Cuenta lecturas de un sensor."""
-        query = select(func.count(LecturaSensor.id)).where(
-            LecturaSensor.sensor_id == sensor_id
+        """Contar lecturas de un sensor."""
+        query = select(func.count(Lectura.id)).where(Lectura.sensor_id == sensor_id)
+        
+        if start_date:
+            query = query.where(Lectura.ts >= start_date)
+        if end_date:
+            query = query.where(Lectura.ts <= end_date)
+        
+        result = await self.session.execute(query)
+        return result.scalar_one()
+
+    async def get_latest_by_sensor(self, sensor_id: UUID, limit: int = 10) -> List[Lectura]:
+        """Obtener las últimas N lecturas de un sensor."""
+        result = await self.session.execute(
+            select(Lectura)
+            .where(Lectura.sensor_id == sensor_id)
+            .order_by(Lectura.ts.desc())
+            .limit(limit)
         )
-        
-        if fecha_inicio:
-            query = query.where(LecturaSensor.timestamp_lectura >= fecha_inicio)
-        
-        if fecha_fin:
-            query = query.where(LecturaSensor.timestamp_lectura <= fecha_fin)
-        
-        if fuera_rango is not None:
-            query = query.where(LecturaSensor.fuera_rango == fuera_rango)
-        
-        result = await self.session.execute(query)
-        return result.scalar() or 0
-    
-    async def get_recent_lecturas(
-        self,
-        moto_id: Optional[int] = None,
-        limit: int = 10
-    ) -> List[LecturaSensor]:
-        """Obtiene las lecturas más recientes."""
-        query = select(LecturaSensor).join(Sensor)
-        
-        if moto_id:
-            query = query.where(Sensor.moto_id == moto_id)
-        
-        query = query.order_by(LecturaSensor.timestamp_lectura.desc()).limit(limit)
-        
-        result = await self.session.execute(query)
         return list(result.scalars().all())
-    
-    async def count_today(self, moto_id: Optional[int] = None) -> int:
-        """Cuenta lecturas de hoy."""
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        query = select(func.count(LecturaSensor.id)).where(
-            LecturaSensor.timestamp_lectura >= today_start
-        )
-        
-        if moto_id:
-            query = query.join(Sensor).where(Sensor.moto_id == moto_id)
-        
-        result = await self.session.execute(query)
-        return result.scalar() or 0
-    
-    async def count_alerts_today(self, moto_id: Optional[int] = None) -> int:
-        """Cuenta alertas generadas hoy."""
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        query = select(func.count(LecturaSensor.id)).where(
-            LecturaSensor.timestamp_lectura >= today_start,
-            LecturaSensor.alerta_generada == True
-        )
-        
-        if moto_id:
-            query = query.join(Sensor).where(Sensor.moto_id == moto_id)
-        
-        result = await self.session.execute(query)
-        return result.scalar() or 0

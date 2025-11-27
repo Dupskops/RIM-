@@ -2,11 +2,18 @@
 Modelos ORM para autenticación.
 Define la estructura de datos de usuarios y tokens en la base de datos.
 """
-from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import enum
 
 from src.shared.models import BaseModel
+
+
+class RolUsuario(str, enum.Enum):
+    """Roles de usuario en el sistema."""
+    USER = "user"  # Minúsculas para coincidir con PostgreSQL ENUM
+    ADMIN = "admin"  # Minúsculas para coincidir con PostgreSQL ENUM
 
 
 class Usuario(BaseModel):
@@ -36,15 +43,21 @@ class Usuario(BaseModel):
     
     # Información personal
     nombre = Column(String(255), nullable=False)
+    apellido = Column(String(255), nullable=True)
     telefono = Column(String(20), nullable=True)
     
     # Estado de la cuenta
     email_verificado = Column(Boolean, default=False, nullable=False)
     activo = Column(Boolean, default=True, nullable=False)
-    rol = Column(String(20), default="user", nullable=False, index=True)
+    rol = Column(
+        SQLEnum(RolUsuario, native_enum=True, name="rol_usuario", values_callable=lambda obj: [e.value for e in obj]),
+        default=RolUsuario.USER,
+        nullable=False,
+        index=True
+    )
     
     # Metadata de login
-    ultimo_login = Column(DateTime, nullable=True)
+    ultimo_login = Column(DateTime(timezone=True), nullable=True)
     
     # Relaciones
     motos = relationship("Moto", back_populates="usuario", lazy="selectin")
@@ -62,10 +75,11 @@ class Usuario(BaseModel):
             "id": str(self.id),
             "email": self.email,
             "nombre": self.nombre,
+            "apellido": self.apellido,
             "telefono": self.telefono,
             "email_verificado": self.email_verificado,
             "activo": self.activo,
-            "rol": self.rol,
+            "rol": self.rol.value if isinstance(self.rol, RolUsuario) else self.rol,
             "ultimo_login": self.ultimo_login.isoformat() if self.ultimo_login else None,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -93,9 +107,9 @@ class RefreshToken(BaseModel):
     
     usuario_id = Column(Integer, nullable=False, index=True)
     token = Column(Text, unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     revocado = Column(Boolean, default=False, nullable=False)
-    revocado_at = Column(DateTime, nullable=True)
+    revocado_at = Column(DateTime(timezone=True), nullable=True)
     
     # Metadata de seguridad
     ip_address = Column(String(45), nullable=True)  # IPv6 puede ser hasta 45 chars
@@ -142,9 +156,9 @@ class PasswordResetToken(BaseModel):
     
     usuario_id = Column(Integer, nullable=False, index=True)
     token = Column(String(255), unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     usado = Column(Boolean, default=False, nullable=False)
-    usado_at = Column(DateTime, nullable=True)
+    usado_at = Column(DateTime(timezone=True), nullable=True)
     
     def __repr__(self):
         return f"<PasswordResetToken(usuario_id='{self.usuario_id}', usado={self.usado})>"
@@ -187,9 +201,9 @@ class EmailVerificationToken(BaseModel):
     
     usuario_id = Column(Integer, nullable=False, index=True)
     token = Column(String(255), unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     usado = Column(Boolean, default=False, nullable=False)
-    usado_at = Column(DateTime, nullable=True)
+    usado_at = Column(DateTime(timezone=True), nullable=True)
     
     def __repr__(self):
         return f"<EmailVerificationToken(usuario_id='{self.usuario_id}', usado={self.usado})>"
