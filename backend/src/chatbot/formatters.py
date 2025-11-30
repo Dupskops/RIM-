@@ -48,12 +48,10 @@ def format_moto_context_for_llm(context: Dict[str, Any]) -> str:
     # Unir todas las secciones
     formatted_text = "\n\n".join(sections)
     
-    # Agregar header
-    header = "=" * 60
-    header += "\nDATOS DE LA MOTO DEL USUARIO"
-    header += "\n" + "=" * 60
+    # Header compacto
+    header = "=== DATOS DE TU MOTO ==="
     
-    return f"{header}\n\n{formatted_text}\n\n{header}"
+    return f"{header}\n{formatted_text}\n{header}"
 
 
 def _format_errors(errors: List[str]) -> str:
@@ -87,65 +85,45 @@ def _format_moto_info(moto_info: Dict[str, Any]) -> str:
 
 
 def _format_componentes(componentes: List[Dict[str, Any]]) -> str:
-    """Formatea estado de componentes."""
+    """Formatea estado de componentes (solo problemas para optimizar contexto)."""
     if not componentes:
-        return "⚙️ ESTADO DE COMPONENTES:\n  No hay datos de componentes disponibles."
-    
-    text = "⚙️ ESTADO DE COMPONENTES:\n"
+        return "⚙️ COMPONENTES: Sin datos"
     
     # Agrupar por estado
-    por_estado = {
-        'EXCELENTE': [],
-        'BUENO': [],
-        'ATENCION': [],
-        'CRITICO': [],
-        'FRIO': []
-    }
+    criticos = []
+    atencion = []
+    buenos_count = 0
     
     for comp in componentes:
         estado = comp.get('estado', 'BUENO').upper()
-        if estado in por_estado:
-            por_estado[estado].append(comp)
+        if estado == 'CRITICO':
+            criticos.append(comp)
+        elif estado == 'ATENCION':
+            atencion.append(comp)
+        elif estado in ['BUENO', 'EXCELENTE']:
+            buenos_count += 1
     
-    # Mostrar críticos primero
-    if por_estado['CRITICO']:
-        text += "\n  🔴 CRÍTICOS (requieren atención inmediata):\n"
-        for comp in por_estado['CRITICO']:
-            text += f"    - {comp['nombre']}"
-            if comp.get('ultimo_valor'):
-                text += f" (valor: {comp['ultimo_valor']})"
-            text += "\n"
+    # Formato compacto - solo mostrar problemas
+    text = "⚙️ COMPONENTES:\n"
     
-    # Luego atención
-    if por_estado['ATENCION']:
-        text += "\n  ⚠️ REQUIEREN ATENCIÓN:\n"
-        for comp in por_estado['ATENCION']:
-            text += f"    - {comp['nombre']}"
-            if comp.get('ultimo_valor'):
-                text += f" (valor: {comp['ultimo_valor']})"
-            text += "\n"
+    if criticos:
+        text += f"  🔴 CRÍTICOS: {', '.join([c['nombre'] for c in criticos])}\n"
     
-    # Luego buenos
-    if por_estado['BUENO']:
-        text += "\n  ✅ EN BUEN ESTADO:\n"
-        for comp in por_estado['BUENO']:
-            text += f"    - {comp['nombre']}\n"
+    if atencion:
+        text += f"  ⚠️ ATENCIÓN: {', '.join([c['nombre'] for c in atencion])}\n"
     
-    # Excelentes
-    if por_estado['EXCELENTE']:
-        text += "\n  ⭐ EXCELENTE ESTADO:\n"
-        for comp in por_estado['EXCELENTE']:
-            text += f"    - {comp['nombre']}\n"
+    if buenos_count > 0:
+        text += f"  ✅ En buen estado: {buenos_count} componentes\n"
     
     return text
 
 
 def _format_fallas(fallas: List[Dict[str, Any]]) -> str:
-    """Formatea fallas recientes."""
+    """Formatea fallas recientes (formato compacto)."""
     if not fallas:
-        return "✅ FALLAS RECIENTES:\n  No hay fallas activas detectadas."
+        return "✅ FALLAS: Ninguna activa"
     
-    text = f"⚠️ FALLAS RECIENTES ({len(fallas)} activas):\n"
+    text = f"⚠️ FALLAS ({len(fallas)}):\n"
     
     for i, falla in enumerate(fallas, 1):
         severidad_icon = {
@@ -155,18 +133,12 @@ def _format_fallas(fallas: List[Dict[str, Any]]) -> str:
             'baja': '🟢'
         }.get(falla.get('severidad', 'media').lower(), '⚪')
         
-        text += f"\n  {i}. {severidad_icon} {falla.get('titulo', 'Falla sin título')}\n"
-        text += f"     Componente: {falla.get('componente', 'N/A')}\n"
-        text += f"     Severidad: {falla.get('severidad', 'N/A').upper()}\n"
-        
-        if falla.get('descripcion'):
-            text += f"     Descripción: {falla['descripcion']}\n"
+        text += f"  {i}. {severidad_icon} {falla.get('componente')}: {falla.get('titulo')}"
         
         if falla.get('requiere_atencion_inmediata'):
-            text += f"     ⚠️ REQUIERE ATENCIÓN INMEDIATA\n"
+            text += " [URGENTE]"
         
-        if not falla.get('puede_conducir', True):
-            text += f"     🚫 NO SE RECOMIENDA CONDUCIR\n"
+        text += "\n"
     
     return text
 

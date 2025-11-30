@@ -21,14 +21,8 @@ class NotificacionCreate(BaseModel):
     tipo: TipoNotificacion = Field(default=TipoNotificacion.INFO, description="Tipo de notificación")
     canal: CanalNotificacion = Field(default=CanalNotificacion.IN_APP, description="Canal de envío")
     
-    datos_adicionales: Optional[dict[str, Any]] = Field(default=None, description="Datos adicionales en JSON")
-    accion_url: Optional[str] = Field(default=None, max_length=500, description="URL de acción")
-    accion_tipo: Optional[str] = Field(default=None, max_length=50, description="Tipo de acción")
-    
     referencia_tipo: Optional[str] = Field(default=None, max_length=50, description="Tipo de referencia")
     referencia_id: Optional[int] = Field(default=None, description="ID del objeto referenciado")
-    
-    expira_en: Optional[datetime] = Field(default=None, description="Fecha de expiración")
 
 
 class NotificacionMasivaCreate(BaseModel):
@@ -39,11 +33,7 @@ class NotificacionMasivaCreate(BaseModel):
     tipo: TipoNotificacion = Field(default=TipoNotificacion.INFO)
     canal: CanalNotificacion = Field(default=CanalNotificacion.IN_APP)
     
-    datos_adicionales: Optional[dict[str, Any]] = None
-    accion_url: Optional[str] = Field(default=None, max_length=500)
-    accion_tipo: Optional[str] = Field(default=None, max_length=50)
-    #Agregue el expira_en 
-    expira_en: Optional[datetime] = Field(default=None, description="Fecha de expiración")
+    canal: CanalNotificacion = Field(default=CanalNotificacion.IN_APP)
 
 class NotificacionFilterParams(FilterParams):
     """Parámetros de filtrado para notificaciones."""
@@ -93,10 +83,6 @@ class NotificacionResponse(BaseModel):
     canal: CanalNotificacion
     estado: EstadoNotificacion
     
-    datos_adicionales: Optional[dict[str, Any]] = None
-    accion_url: Optional[str] = None
-    accion_tipo: Optional[str] = None
-    
     referencia_tipo: Optional[str] = None
     referencia_id: Optional[int] = None
     
@@ -106,7 +92,6 @@ class NotificacionResponse(BaseModel):
     enviada: bool
     enviada_en: Optional[datetime] = None
     
-    expira_en: Optional[datetime] = None
     created_at: datetime
     
     class Config:

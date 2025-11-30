@@ -1,4 +1,4 @@
-import Layout from '@/components/layout'
+import Layout from '@/components/layouts/layout'
 import { createFileRoute } from '@tanstack/react-router'
 
 

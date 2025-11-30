@@ -59,7 +59,9 @@ if (!rootElement.innerHTML) {
             },
           }}
         />
-        <ReactQueryDevtools initialIsOpen={false} />
+        {import.meta.env.DEV && (
+          <ReactQueryDevtools initialIsOpen={false} />
+        )}
       </QueryClientProvider>
     </StrictMode>
   );

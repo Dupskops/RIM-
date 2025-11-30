@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.notificaciones.models import TipoNotificacion, CanalNotificacion
 from src.notificaciones.use_cases import CrearNotificacionUseCase
+from src.notificaciones.services import NotificacionService
 from src.config.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -27,21 +28,35 @@ async def handle_user_registered(event) -> None:
         
         # Obtener sesión de BD
         async for db in get_db():
-            use_case = CrearNotificacionUseCase()
+            # Crear servicios y use case con dependencias
+            from src.notificaciones.repositories import NotificacionRepository, PreferenciaNotificacionRepository
+            from src.shared.event_bus import event_bus
             
-            await use_case.execute(
-                db=db,
-                usuario_id=event.user_id,
-                tipo=TipoNotificacion.INFORMACION,
+            notif_repo = NotificacionRepository(db)
+            pref_repo = PreferenciaNotificacionRepository(db)
+            notif_service = NotificacionService(notif_repo, pref_repo)
+            use_case = CrearNotificacionUseCase(notif_service, event_bus)
+            
+            # Crear notificación
+            logger.info(f"DEBUG: TipoNotificacion.INFO.value = {TipoNotificacion.INFO.value}")
+            logger.info(f"DEBUG: Passing tipo={TipoNotificacion.INFO.value} to use_case")
+            
+            notificacion = await use_case.execute(
+                usuario_id=int(event.user_id),
+                tipo=TipoNotificacion.INFO.value,
                 titulo="¡Bienvenido a RIM!",
                 mensaje=f"Hola {event.nombre}, gracias por registrarte en RIM - Sistema Inteligente de Moto. "
-                        f"Tu cuenta ha sido creada exitosamente.",
-                canal=CanalNotificacion.EMAIL,
-                metadata={
-                    "email": event.email,
-                    "verification_token": event.verification_token
-                }
+                        f"Tu cuenta ha sido creada exitosamente. Email: {event.email}",
+                canal=CanalNotificacion.EMAIL.value
             )
+            
+            # Guardar el email temporalmente en el objeto para el servicio de envío
+            notificacion.email_destino = event.email
+            notificacion.nombre_usuario = event.nombre
+            
+            # Enviar el email inmediatamente
+            await notif_service.enviar_notificacion(notificacion.id, notificacion_obj=notificacion)
+            
             break
             
         logger.info(f"✅ Email de bienvenida enviado a {event.email}")

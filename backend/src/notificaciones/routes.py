@@ -86,12 +86,8 @@ async def crear_notificacion(
         mensaje=data.mensaje,
         tipo=data.tipo,
         canal=data.canal,
-        datos_adicionales=data.datos_adicionales,
-        accion_url=data.accion_url,
-        accion_tipo=data.accion_tipo,
         referencia_tipo=data.referencia_tipo,
-        referencia_id=data.referencia_id,
-        expira_en=data.expira_en
+        referencia_id=data.referencia_id
     )
     #Para que llegue la notificacion
     try:
@@ -134,11 +130,7 @@ async def crear_notificacion_masiva(
         titulo=data.titulo,
         mensaje=data.mensaje,
         tipo=data.tipo,
-        canal=data.canal,
-        datos_adicionales=data.datos_adicionales,
-        accion_url=data.accion_url,
-        accion_tipo=data.accion_tipo,
-        expira_en=data.expira_en
+        canal=data.canal
     )
     
     return ApiResponse(

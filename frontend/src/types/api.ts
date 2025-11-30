@@ -24,7 +24,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/auth/login": {
+    "/api/login": {
         parameters: {
             query?: never;
             header?: never;
@@ -4987,9 +4987,14 @@ export interface components {
             password: string;
             /**
              * Nombre
-             * @description Nombre completo
+             * @description Nombre del usuario
              */
             nombre: string;
+            /**
+             * Apellido
+             * @description Apellido del usuario
+             */
+            apellido: string;
             /**
              * Telefono
              * @description Teléfono de contacto

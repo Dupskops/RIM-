@@ -288,7 +288,7 @@ class NotificacionWebSocketHandler(BaseWebSocketHandler):
                             "mensaje": notif.mensaje,
                             "leida": notif.leida,
                             "created_at": notif.created_at.isoformat(),
-                            "datos_adicionales": notif.datos_adicionales or {},
+                            "datos_adicionales": {},
                         }
                         for notif in notifications
                     ],

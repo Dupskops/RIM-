@@ -58,7 +58,7 @@ export const isAuthenticated = (): boolean => {
  */
 export const requireAuth = () => {
   if (!isAuthenticated()) {
-    throw redirect({ to: '/login' });
+    throw redirect({ to: '/auth/login' });
   }
 };
 
@@ -68,6 +68,6 @@ export const requireAuth = () => {
  */
 export const requireGuest = () => {
   if (isAuthenticated()) {
-    throw redirect({ to: '/home' });
+    throw redirect({ to: '/app' });
   }
 };

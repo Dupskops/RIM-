@@ -47,6 +47,21 @@ export const NombreSchema = v.pipe(
 );
 
 /**
+ * Schema de validación para apellido
+ * Requisitos:
+ * - Mínimo 2 caracteres
+ * - Máximo 255 caracteres
+ * - Solo letras y espacios
+ */
+export const ApellidoSchema = v.pipe(
+  v.string('El apellido es requerido'),
+  v.nonEmpty('El apellido no puede estar vacío'),
+  v.minLength(2, 'El apellido debe tener al menos 2 caracteres'),
+  v.maxLength(255, 'El apellido no puede exceder 255 caracteres'),
+  v.regex(/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/, 'El apellido solo puede contener letras y espacios'),
+);
+
+/**
  * Schema de validación para teléfono
  * Formato: +[código país][número] (8-15 dígitos)
  */
@@ -71,6 +86,7 @@ export const TelefonoOptionalSchema = v.optional(
  */
 export const RegisterSchema = v.object({
   nombre: NombreSchema,
+  apellido: ApellidoSchema,
   email: EmailSchema,
   telefono: TelefonoOptionalSchema,
   password: PasswordSchema,

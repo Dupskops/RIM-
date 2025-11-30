@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # ============================================
     # BASE DE DATOS
     # ============================================
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rim_db_v2"
+    DATABASE_URL: str = "postgresql+asyncpg://rim_user:rim_password@localhost:5432/rim_db"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     DATABASE_ECHO: bool = False  # Log de queries SQL
@@ -120,6 +120,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",  # React dev
         "http://localhost:5173",  # Vite dev
+        "http://localhost:4173",  # Vite build
         "http://localhost:8080",  # Producción local
     ]
     

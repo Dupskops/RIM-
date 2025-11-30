@@ -8,7 +8,7 @@
  */
 const buildUrl = (path: string, params?: Record<string, string | number>): string => {
   if (!params) return path;
-  
+
   let url = path;
   Object.entries(params).forEach(([key, value]) => {
     url = url.replace(`{${key}}`, String(value));
@@ -51,6 +51,7 @@ export const USUARIOS_ENDPOINTS = {
  */
 export const MOTOS_ENDPOINTS = {
   BASE: '/motos/',
+  MODELOS_DISPONIBLES: '/motos/modelos-disponibles',
   STATS: '/motos/stats',
   BY_ID: (id: string | number) => buildUrl('/motos/{moto_id}', { moto_id: id }),
   UPDATE: (id: string | number) => buildUrl('/motos/{moto_id}', { moto_id: id }), // PATCH
