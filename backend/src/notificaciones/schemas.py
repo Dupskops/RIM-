@@ -89,7 +89,7 @@ class NotificacionResponse(BaseModel):
     leida: bool
     leida_en: Optional[datetime] = None
     
-    enviada: bool
+    enviada: bool = False
     enviada_en: Optional[datetime] = None
     
     created_at: datetime

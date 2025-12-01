@@ -43,7 +43,56 @@ class CreateMotoUseCase:
         
         moto_data = self.service.prepare_moto_data(data.model_dump(), usuario_id)
         moto = await self.repo.create(moto_data)
-        
+
+        # 🔔 Crear notificación IN_APP al registrar la moto
+                # 🔔 Crear notificación IN_APP al registrar la moto
+        try:
+            from src.notificaciones.repositories import (
+                NotificacionRepository,
+                PreferenciaNotificacionRepository,
+            )
+            from src.notificaciones.services import NotificacionService
+            from src.notificaciones.use_cases import CrearNotificacionUseCase
+            from src.notificaciones.models import TipoNotificacion, CanalNotificacion
+            from src.shared.event_bus import event_bus
+
+            notif_repo = NotificacionRepository(self.db)
+            pref_repo = PreferenciaNotificacionRepository(self.db)
+            notif_service = NotificacionService(notif_repo, pref_repo)
+            crear_notif_uc = CrearNotificacionUseCase(notif_service, event_bus)
+
+            # Kilometraje actual (0 si viene None)
+            km_value = getattr(moto, "kilometraje_actual", None)
+            if km_value is None:
+                km_value = 0
+
+            # Limpiar representación: 0.00 -> "0"
+            if isinstance(km_value, (int, float, Decimal)):
+                km_str = str(km_value).rstrip("0").rstrip(".")
+            else:
+                km_str = str(km_value)
+
+            mensaje_km = (
+                f"Tu moto con placa {moto.placa} ha sido registrada "
+                f"con un kilometraje actual de {km_str} km."
+            )
+
+            await crear_notif_uc.execute(
+                usuario_id=usuario_id,
+                tipo=TipoNotificacion.INFO.value,
+                titulo="Moto registrada",
+                mensaje=mensaje_km,
+                canal=CanalNotificacion.IN_APP.value,
+                # ⚠️ referencia_tipo no acepta "moto", así que la dejamos en None
+                # referencia_tipo=None y referencia_id=None son opcionales en el schema
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(
+                f"Error creando notificación de moto registrada: {e}"
+            )
+
+
         # Provisionar estados iniciales para todos los componentes del modelo
         await self.service.provision_estados_iniciales(
             db=self.db,

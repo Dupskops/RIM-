@@ -80,8 +80,6 @@ const AppChatbotRoute = AppChatbotRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
   '/app/chatbot': typeof AppChatbotRoute
   '/app/diagnostico': typeof AppDiagnosticoRoute
   '/app/garaje': typeof AppGarajeRoute
@@ -94,8 +92,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
   '/app/chatbot': typeof AppChatbotRoute
   '/app/diagnostico': typeof AppDiagnosticoRoute
   '/app/garaje': typeof AppGarajeRoute
@@ -110,8 +106,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteRouteWithChildren
-  '/login': typeof LoginRoute
-  '/register': typeof RegisterRoute
   '/app/chatbot': typeof AppChatbotRoute
   '/app/diagnostico': typeof AppDiagnosticoRoute
   '/app/garaje': typeof AppGarajeRoute
@@ -127,8 +121,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/app'
-    | '/login'
-    | '/register'
     | '/app/chatbot'
     | '/app/diagnostico'
     | '/app/garaje'
@@ -141,8 +133,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/login'
-    | '/register'
     | '/app/chatbot'
     | '/app/diagnostico'
     | '/app/garaje'
@@ -156,8 +146,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/app'
-    | '/login'
-    | '/register'
     | '/app/chatbot'
     | '/app/diagnostico'
     | '/app/garaje'
@@ -172,8 +160,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRouteRoute: typeof AppRouteRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  RegisterRoute: typeof RegisterRoute
   AuthLoginRoute: typeof AuthLoginRoute
   AuthRegisterRoute: typeof AuthRegisterRoute
 }
@@ -287,8 +273,6 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRouteRoute: AppRouteRouteWithChildren,
-  LoginRoute: LoginRoute,
-  RegisterRoute: RegisterRoute,
   AuthLoginRoute: AuthLoginRoute,
   AuthRegisterRoute: AuthRegisterRoute,
 }
