@@ -345,11 +345,19 @@ async def send_moto_confirmation_email(event: Any) -> None:
 
 async def send_subscription_upgrade_confirmation(event: Any) -> None:
     """
-    Confirmar upgrade de suscripción.
-    Evento escuchado: SuscripcionUpgradedEvent (suscripciones)
+    Confirmar cambio de plan de suscripción.
+    Evento escuchado: PlanChangedEvent (suscripciones)
+    Delega al módulo de notificaciones para crear y enviar el email.
     """
-    logger.info(f"💳 Enviando confirmación de upgrade a usuario {event.usuario_id}")
-    logger.info(f"✅ Confirmación de upgrade procesada")
+    try:
+        from src.notificaciones.handlers import handle_plan_changed
+        
+        logger.info(f"💳 Procesando email de cambio de plan para usuario {event.usuario_id}")
+        await handle_plan_changed(event)
+        logger.info(f"✅ Email de cambio de plan procesado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando email de cambio de plan: {str(e)}", exc_info=True)
 
 
 async def send_subscription_expiration_reminder(event: Any) -> None:

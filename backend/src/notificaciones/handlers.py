@@ -197,6 +197,64 @@ async def handle_moto_registered(event) -> None:
         logger.error(f"❌ Error enviando email de confirmación de moto: {str(e)}")
 
 
+async def handle_plan_changed(event) -> None:
+    """
+    Handler: Enviar email de confirmación cuando un usuario cambia de plan.
+    Evento: PlanChangedEvent
+    """
+    try:
+        logger.info(f"💳 Enviando email de cambio de plan a usuario {event.usuario_id}")
+        
+        async for db in get_db():
+            from src.notificaciones.repositories import NotificacionRepository, PreferenciaNotificacionRepository
+            from src.auth.repositories import UsuarioRepository
+            from src.shared.event_bus import event_bus
+            
+            notif_repo = NotificacionRepository(db)
+            pref_repo = PreferenciaNotificacionRepository(db)
+            notif_service = NotificacionService(notif_repo, pref_repo)
+            use_case = CrearNotificacionUseCase(notif_service, event_bus)
+            
+            # Obtener datos del usuario
+            usuario_repo = UsuarioRepository(db)
+            usuario = await usuario_repo.get_by_id(event.usuario_id)
+            
+            if not usuario:
+                logger.warning(f"Usuario {event.usuario_id} no encontrado para enviar email de cambio de plan")
+                return
+            
+            # Determinar si es upgrade o downgrade
+            is_upgrade = event.plan_nuevo_nombre.upper() != "FREE"
+            tipo_cambio = "upgrade" if is_upgrade else "downgrade"
+            emoji = "✨" if is_upgrade else "📋"
+            
+            # Crear notificación
+            notificacion = await use_case.execute(
+                usuario_id=event.usuario_id,
+                tipo=TipoNotificacion.INFO.value,
+                titulo=f"{emoji} Plan actualizado a {event.plan_nuevo_nombre}",
+                mensaje=f"Tu plan ha sido cambiado exitosamente.\n\n"
+                        f"Plan anterior: {event.plan_anterior_nombre}\n"
+                        f"Nuevo plan: {event.plan_nuevo_nombre}\n\n"
+                        f"{'¡Disfruta de todas las funciones premium!' if is_upgrade else 'Gracias por usar RIM.'}",
+                canal=CanalNotificacion.EMAIL.value
+            )
+            
+            # Guardar datos para el email
+            notificacion.email_destino = usuario.email
+            notificacion.nombre_usuario = usuario.nombre
+            
+            # Enviar email
+            await notif_service.enviar_notificacion(notificacion.id, notificacion_obj=notificacion)
+            
+            break
+            
+        logger.info(f"✅ Email de cambio de plan enviado a {usuario.email}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error enviando email de cambio de plan: {str(e)}")
+
+
 # ============================================
 # HANDLERS DE FALLAS
 # ============================================
