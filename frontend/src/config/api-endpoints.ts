@@ -65,6 +65,9 @@ export const MOTOS_ENDPOINTS = {
 export const SUSCRIPCIONES_ENDPOINTS = {
   BASE: '/suscripciones/',
   ME: '/suscripciones/me',
+  MI_SUSCRIPCION: '/suscripciones/mi-suscripcion',
+  PLANES: '/suscripciones/planes',
+  CAMBIAR_PLAN: '/suscripciones/cambiar-plan',
   STATS: '/suscripciones/stats',
   BY_ID: (id: string | number) => buildUrl('/suscripciones/{suscripcion_id}', { suscripcion_id: id }),
   UPGRADE: '/suscripciones/upgrade',
