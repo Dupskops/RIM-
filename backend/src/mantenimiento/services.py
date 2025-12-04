@@ -13,27 +13,32 @@ from src.shared.utils import safe_divide, percentage
 def generate_codigo_mantenimiento() -> str:
     """
     Genera un código único para el mantenimiento.
-    Formato: MN-YYYYMMDD-XXX
+    Formato: MNT-YYYYMMDD-XXX
     """
+    import random
     now = datetime.now()
     fecha_str = now.strftime("%Y%m%d")
-    ms = now.microsecond // 1000
-    return f"MN-{fecha_str}-{ms:03d}"
+    # Usar número aleatorio para evitar colisiones cuando se crean múltiples registros rápidamente
+    random_num = random.randint(0, 999)
+    return f"MNT-{fecha_str}-{random_num:03d}"
 
 
 def calculate_costo_estimado(tipo: TipoMantenimiento) -> float:
-    """Calcula el costo estimado según el tipo de mantenimiento."""
+    """
+    Calcula el costo estimado según el tipo de mantenimiento.
+    Precios en soles peruanos (S/.) para motos medianas (250-400cc).
+    """
     costos_base = {
-        TipoMantenimiento.CAMBIO_ACEITE: 50000.0,
-        TipoMantenimiento.CAMBIO_FILTRO_AIRE: 30000.0,
-        TipoMantenimiento.CAMBIO_LLANTAS: 400000.0,
-        TipoMantenimiento.REVISION_FRENOS: 80000.0,
-        TipoMantenimiento.AJUSTE_CADENA: 25000.0,
-        TipoMantenimiento.REVISION_GENERAL: 150000.0,
-        TipoMantenimiento.CAMBIO_BATERIA: 200000.0,
-        TipoMantenimiento.CAMBIO_BUJIAS: 60000.0,
+        TipoMantenimiento.CAMBIO_ACEITE: 120.0,          # S/. 80-150 (aceite + filtro + mano de obra)
+        TipoMantenimiento.CAMBIO_FILTRO_AIRE: 50.0,      # S/. 30-70 (filtro + limpieza)
+        TipoMantenimiento.CAMBIO_LLANTAS: 1000.0,        # S/. 800-1200 (par de llantas medianas)
+        TipoMantenimiento.REVISION_FRENOS: 150.0,        # S/. 100-200 (pastillas + revisión)
+        TipoMantenimiento.AJUSTE_CADENA: 40.0,           # S/. 30-50 (ajuste + lubricación)
+        TipoMantenimiento.REVISION_GENERAL: 250.0,       # S/. 200-300 (revisión completa)
+        TipoMantenimiento.CAMBIO_BATERIA: 280.0,         # S/. 250-350 (batería de calidad)
+        TipoMantenimiento.CAMBIO_BUJIAS: 80.0,           # S/. 60-100 (bujías + mano de obra)
     }
-    return costos_base.get(tipo, 100000.0)
+    return costos_base.get(tipo, 150.0)  # Default: S/. 150
 
 
 def calculate_prioridad_base(tipo: TipoMantenimiento, es_preventivo: bool) -> int:
@@ -313,3 +318,87 @@ def calculate_efficiency_score(mantenimiento: Mantenimiento) -> Optional[float]:
             score -= penalizacion
     
     return max(0.0, score)
+
+
+async def crear_mantenimientos_iniciales(
+    db,  # AsyncSession
+    moto_id: int,
+    kilometraje_actual: int = 0
+) -> List[Mantenimiento]:
+    """
+    Crea mantenimientos programados iniciales para una moto recién registrada.
+    
+    Crea 3 mantenimientos preventivos por defecto:
+    - Primer servicio a 1000 km (30 días)
+    - Servicio a 5000 km
+    - Servicio a 10000 km
+    
+    Args:
+        db: Sesión de base de datos (AsyncSession)
+        moto_id: ID de la moto recién creada
+        kilometraje_actual: Kilometraje actual de la moto (default: 0)
+        
+    Returns:
+        Lista de mantenimientos creados
+        
+    Example:
+        >>> mantenimientos = await crear_mantenimientos_iniciales(db, moto_id=1, kilometraje_actual=0)
+        >>> len(mantenimientos)
+        3
+    """
+    from src.mantenimiento.repositories import MantenimientoRepository
+    from src.mantenimiento.models import Mantenimiento
+    
+    repo = MantenimientoRepository(db)
+    mantenimientos_creados = []
+    
+    # Definir los mantenimientos iniciales
+    mantenimientos_config = [
+        {
+            "tipo": TipoMantenimiento.REVISION_GENERAL,
+            "kilometraje_siguiente": kilometraje_actual + 1000,
+            "dias_hasta_programada": 30,
+            "descripcion": "Primer servicio de revisión - 1000 km"
+        },
+        {
+            "tipo": TipoMantenimiento.CAMBIO_ACEITE,
+            "kilometraje_siguiente": kilometraje_actual + 5000,
+            "dias_hasta_programada": 90,
+            "descripcion": "Servicio de mantenimiento - 5000 km (Cambio de aceite y filtro)"
+        },
+        {
+            "tipo": TipoMantenimiento.REVISION_GENERAL,
+            "kilometraje_siguiente": kilometraje_actual + 10000,
+            "dias_hasta_programada": 180,
+            "descripcion": "Servicio de mantenimiento - 10000 km (Revisión general)"
+        }
+    ]
+    
+    # Crear cada mantenimiento
+    for config in mantenimientos_config:
+        fecha_programada = date.today() + timedelta(days=config["dias_hasta_programada"])
+        
+        # DEBUG: Verificar el valor del enum
+        tipo_valor = config["tipo"].value if hasattr(config["tipo"], 'value') else str(config["tipo"])
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"DEBUG: Tipo mantenimiento = {tipo_valor} (type: {type(tipo_valor)})")
+        
+        # Crear objeto Mantenimiento con solo los campos que existen en la tabla
+        mantenimiento = Mantenimiento(
+            codigo=generate_codigo_mantenimiento(),
+            moto_id=moto_id,
+            tipo=tipo_valor,  # Usar el valor extraído explícitamente
+            estado=EstadoMantenimiento.PENDIENTE,
+            kilometraje_actual=kilometraje_actual,
+            kilometraje_siguiente=config["kilometraje_siguiente"],
+            fecha_programada=fecha_programada,
+            descripcion=config["descripcion"],
+            costo_estimado=calculate_costo_estimado(config["tipo"])
+        )
+        
+        mantenimiento_creado = await repo.create(mantenimiento)
+        mantenimientos_creados.append(mantenimiento_creado)
+    
+    return mantenimientos_creados
+

@@ -52,7 +52,7 @@ async def setup_event_handlers():
         MantenimientoUrgenteEvent, 
     )
     from .ml.events import PrediccionGeneradaEvent, AnomaliaDetectadaEvent
-    from .motos.events import KilometrajeUpdatedEvent
+    from .motos.events import KilometrajeUpdatedEvent, MotoRegisteredEvent
     from .auth.events import UserRegisteredEvent, PasswordResetRequestedEvent
     from .suscripciones.events import PlanChangedEvent, SuscripcionCancelledEvent
     # from .chatbot.events import LimiteAlcanzadoEvent  # REMOVIDO: Ya no existe en events.py
@@ -124,6 +124,12 @@ async def setup_event_handlers():
     event_bus.subscribe_async(UserRegisteredEvent, handlers.send_welcome_email)
     event_bus.subscribe_async(PasswordResetRequestedEvent, handlers.send_password_reset_email)
     logger.info("✅ Auth → Notificaciones (2 handlers)")
+    
+    # ========================================
+    # MOTOS → NOTIFICACIONES
+    # ========================================
+    event_bus.subscribe_async(MotoRegisteredEvent, handlers.send_moto_confirmation_email)
+    logger.info("✅ Motos → Notificaciones (1 handler)")
     
     # ========================================
     # SUSCRIPCIONES → NOTIFICACIONES

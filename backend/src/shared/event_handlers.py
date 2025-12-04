@@ -319,16 +319,45 @@ async def send_password_reset_email(event: Any) -> None:
 
 
 # ============================================
+# HANDLERS: MOTOS → NOTIFICACIONES
+# ============================================
+
+async def send_moto_confirmation_email(event: Any) -> None:
+    """
+    Enviar email de confirmación cuando se registra una nueva moto.
+    Evento escuchado: MotoRegisteredEvent (motos)
+    Delega al módulo de notificaciones para crear y enviar el email.
+    """
+    try:
+        from src.notificaciones.handlers import handle_moto_registered
+        
+        logger.info(f"🏍️ Procesando email de confirmación de moto {event.placa}")
+        await handle_moto_registered(event)
+        logger.info(f"✅ Email de confirmación de moto procesado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando email de confirmación de moto: {str(e)}", exc_info=True)
+
+
+# ============================================
 # HANDLERS: SUSCRIPCIONES → NOTIFICACIONES
 # ============================================
 
 async def send_subscription_upgrade_confirmation(event: Any) -> None:
     """
-    Confirmar upgrade de suscripción.
-    Evento escuchado: SuscripcionUpgradedEvent (suscripciones)
+    Confirmar cambio de plan de suscripción.
+    Evento escuchado: PlanChangedEvent (suscripciones)
+    Delega al módulo de notificaciones para crear y enviar el email.
     """
-    logger.info(f"💳 Enviando confirmación de upgrade a usuario {event.usuario_id}")
-    logger.info(f"✅ Confirmación de upgrade procesada")
+    try:
+        from src.notificaciones.handlers import handle_plan_changed
+        
+        logger.info(f"💳 Procesando email de cambio de plan para usuario {event.usuario_id}")
+        await handle_plan_changed(event)
+        logger.info(f"✅ Email de cambio de plan procesado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando email de cambio de plan: {str(e)}", exc_info=True)
 
 
 async def send_subscription_expiration_reminder(event: Any) -> None:
@@ -382,6 +411,9 @@ REGISTERED_HANDLERS = {
     # Auth → Notificaciones
     "UserRegisteredEvent": ["send_welcome_email"],
     "PasswordResetRequestedEvent": ["send_password_reset_email"],
+    
+    # Motos → Notificaciones
+    "MotoRegisteredEvent": ["send_moto_confirmation_email"],
     
     # Suscripciones → Notificaciones
     "SuscripcionUpgradedEvent": ["send_subscription_upgrade_confirmation"],
