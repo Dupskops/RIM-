@@ -774,6 +774,22 @@ CREATE INDEX idx_entrenamientos_activo ON entrenamientos_modelos(activo) WHERE a
 COMMENT ON TABLE entrenamientos_modelos IS 'Tracking de entrenamientos de modelos ML (MLOps básico)';
 COMMENT ON COLUMN entrenamientos_modelos.en_produccion IS 'TRUE si este modelo está activo en producción';
 
+ALTER TABLE suscripciones ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE planes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE motos ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE sensores ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE lecturas ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE parametros ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE modelos_moto ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE plan_caracteristicas ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE caracteristicas ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE componentes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE reglas_estado ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+
+ALTER TABLE mensajes ADD COLUMN tokens_usados INTEGER DEFAULT 0;
+ALTER TABLE mensajes ADD COLUMN tiempo_respuesta_ms INTEGER DEFAULT 0;
+ALTER TABLE mensajes ADD COLUMN modelo_usado VARCHAR;
 -- ============================================
 -- SECCIÓN 14: COMENTARIOS FINALES
 -- ============================================
