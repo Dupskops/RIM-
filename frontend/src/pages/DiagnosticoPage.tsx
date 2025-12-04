@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { Droplet, Gauge, Zap, Wrench, Battery } from "lucide-react";
 import PopUp from "../components/pop-up";
 import type { StatusCard as PopStatusCard } from "../components/pop-up";
@@ -10,6 +10,7 @@ const DiagnosticoPage: React.FC = () => {
   // (now using external Moto3D component)
 
   type StatusCard = { id: string; title: string; state: string; colorClass: string; icon: React.ComponentType<{ className?: string }> };
+  type MarkerItem = { position: [number, number, number]; label: string; status: "excelente" | "bueno" | "atencion" | "critico" };
 
   const statusCards: StatusCard[] = [
     // Correspond to the 6 points shown around the bike
@@ -20,6 +21,34 @@ const DiagnosticoPage: React.FC = () => {
     { id: 's5', title: 'Neumático trasero', state: 'Excelente', colorClass: 'bg-green-500', icon: Gauge },
     { id: 's6', title: 'Batería', state: 'Excelente', colorClass: 'bg-green-500', icon: Battery },
   ];
+
+  // Mapear los estados Tailwind a estados de marcador 3D
+  const getMarkerStatus = (colorClass: string): "excelente" | "bueno" | "atencion" | "critico" => {
+    if (colorClass.includes('green')) return 'excelente';
+    if (colorClass.includes('sky')) return 'bueno';
+    if (colorClass.includes('orange')) return 'atencion';
+    if (colorClass.includes('red')) return 'critico';
+    return 'critico';
+  };
+
+  // Marcadores correspondientes a cada tarjeta de estado
+  const markerPositions: Record<string, [number, number, number]> = {
+    's1': [0.35, -1.85, -1.74],
+    's2': [0, -0.7, 1.74],
+    's3': [0, -0.2, 0],
+    's4': [0.35, -1.85, 2.4],
+    's5': [0.35, -1.85, -2.30],
+    's6': [0.7, -1.7, -1],
+  };
+
+  // Generar marcadores dinámicos basados en statusCards
+  const dynamicMarkers = useMemo(() => {
+    return statusCards.map((card) => ({
+      position: markerPositions[card.id] || [0, 0, 0],
+      label: card.title,
+      status: getMarkerStatus(card.colorClass),
+    } as MarkerItem));
+  }, [statusCards]);
 
   const handleGenerate = () => {
     // Si ya se inició, reiniciamos la carga para simular re-ejecución
@@ -96,7 +125,7 @@ const DiagnosticoPage: React.FC = () => {
             {/* 3D canvas: keep same container size so overlay points map correctly */}
               <div className="w-full h-[360px] rounded-md shadow-md bg-black relative overflow-hidden">
               {/* Moto3D component (loads /models/moto.glb from public/models) */}
-              <Moto3D onMarkerSelect={handleMarkerSelect} />
+              <Moto3D onMarkerSelect={handleMarkerSelect} markers={dynamicMarkers} />
             </div>
 
             {/* Legend overlay (bottom-left of image) */}

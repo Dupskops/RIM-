@@ -1,3 +1,4 @@
+import React, { useState } from 'react';
 import {
   Battery,
   Zap,
@@ -12,8 +13,8 @@ import {
 } from "lucide-react";
 import { useMotos } from '@/hooks/useMotos';
 import { useMotoStore } from '@/store';
-import { useState } from 'react';
 import FormularioNewMoto from "@/components/formulario";
+import Moto3D from "@/components/Moto3D.tsx";
 const HomePage: React.FC = () => {
   const motosQuery = useMotos();
   const { motos, selectedMoto } = useMotoStore();
@@ -65,17 +66,8 @@ const HomePage: React.FC = () => {
                   {motosQuery.isLoading ? (
                     <div className="w-full h-full animate-pulse" />
                   ) : hasMoto ? (
-                    // Mostrar modelo 3D (placeholder actual, aquí iría el canvas/visor 3D)
-                    <div
-                      className="w-full"
-                      role="img"
-                      aria-label="Modelo 3D de la moto"
-                      style={{
-                        height: 'clamp(310px,42vw,420px)',
-                        background:
-                          'linear-gradient(180deg, rgba(2,6,8,0.8), rgba(0,0,0,0.65))',
-                      }}
-                    />
+                    // Mostrar modelo 3D usando el componente Moto3D
+                    <Moto3D />
                   ) : (
                     // No tiene moto: mostrar botón para agregar
                     <div className="w-full h-full flex flex-col items-center justify-center gap-3">

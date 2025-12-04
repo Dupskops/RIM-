@@ -1,6 +1,6 @@
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useGLTF } from "@react-three/drei";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import * as THREE from "three";
 import Marker from "./Marker.tsx";
 
@@ -20,10 +20,11 @@ function MotoModel() {
   );
 }
 
-export default function Moto3D({ onMarkerSelect }: { onMarkerSelect?: (label: string) => void }) {
+export default function Moto3D({ onMarkerSelect, markers }: { onMarkerSelect?: (label: string) => void; markers?: Array<{ position: [number, number, number]; label: string; status: "excelente" | "bueno" | "atencion" | "critico" }> }) {
   // marcadores estratégicos iniciales (posiciones aproximadas — ajústalas a tu modelo)
   type MarkerItem = { position: [number, number, number]; label: string; status: "excelente" | "bueno" | "atencion" | "critico" };
-  const [markers, setMarkers] = useState<MarkerItem[]>([
+  
+  const defaultMarkers: MarkerItem[] = [
     { position: [0.35, -1.85, -1.74], label: "Sistema de frenos trasero", status: "critico" },
     { position: [0.35, -1.85, 1.85], label: "Sistema de frenos delantero", status: "critico" },
     { position: [0.35, -1.85, 2.4], label: "Neumáticos y ruedas delantero", status: "atencion" },
@@ -33,13 +34,22 @@ export default function Moto3D({ onMarkerSelect }: { onMarkerSelect?: (label: st
     { position: [0, -0.7, 1.74], label: "Sistema eléctrico", status: "atencion" },
     { position: [0.7, -1.7, -1], label: "Escape", status: "bueno" },
     { position: [0, 0.2, 1], label: "Controles y mandos", status: "bueno" },
-  ]);
+  ];
+  
+  const [markersState, setMarkersState] = useState<MarkerItem[]>(markers || defaultMarkers);
+
+  // Actualizar marcadores cuando cambia la prop (para diagnósticos dinámicos)
+  useEffect(() => {
+    if (markers && markers.length > 0) {
+      setMarkersState(markers);
+    }
+  }, [markers]);
 
   // Añadir un marcador donde el usuario haga click (si intersecta algo)
   const handleCanvasPointerDown = (e: any) => {
     if ((e as any).point) {
       const p = e.point as THREE.Vector3;
-      setMarkers((m) => [...m, { position: [p.x, p.y, p.z], label: "Marcador", status: "atencion" }]);
+      setMarkersState((m) => [...m, { position: [p.x, p.y, p.z], label: "Marcador", status: "atencion" }]);
     }
   };
 
@@ -59,7 +69,7 @@ export default function Moto3D({ onMarkerSelect }: { onMarkerSelect?: (label: st
         <MotoModel />
 
         {/* Marcadores: se renderizan sobre la moto */}
-        {markers.map((m, i) => (
+        {markersState.map((m, i) => (
           <Marker key={i} position={m.position} label={m.label} status={m.status} onSelect={onMarkerSelect} />
         ))}
 
