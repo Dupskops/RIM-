@@ -50,10 +50,10 @@ cp .env.example .env
 ## 🚀 Ejecutar el servidor
 
 ```bash
-fastapi dev main.py
+fastapi dev src.main.py
 
 # O usando uvicorn directamente
-uvicorn main:app --reload
+uvicorn src.main:app --reload
 ```
 
 El backend quedará disponible en:

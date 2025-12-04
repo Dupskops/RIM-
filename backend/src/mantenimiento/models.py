@@ -72,61 +72,51 @@ class Mantenimiento(BaseModel):
 
     @property
     def esta_vencido(self) -> bool:
-        """Verifica si el mantenimiento está vencido."""
-        if not self.fecha_vencimiento:
+        """
+        Verifica si el mantenimiento está vencido.
+        Usa fecha_programada como referencia de vencimiento.
+        """
+        if not self.fecha_programada:
             return False
-        return date.today() > self.fecha_vencimiento and not self.esta_completado
+        return date.today() > self.fecha_programada and not self.esta_completado
 
     @property
     def dias_hasta_vencimiento(self) -> Optional[int]:
-        """Calcula días hasta el vencimiento."""
-        if not self.fecha_vencimiento:
+        """
+        Calcula días hasta el vencimiento.
+        Usa fecha_programada como referencia.
+        """
+        if not self.fecha_programada:
             return None
-        delta = self.fecha_vencimiento - date.today()
+        delta = self.fecha_programada - date.today()
         return delta.days
 
     @property
     def requiere_atencion(self) -> bool:
-        """Verifica si requiere atención inmediata."""
-        return (
-            self.es_urgente or 
-            self.prioridad >= 4 or 
-            self.esta_vencido or
-            (self.dias_hasta_vencimiento is not None and self.dias_hasta_vencimiento <= 0)
-        )
-
-    @property
-    def duracion_servicio(self) -> Optional[int]:
-        """Calcula la duración del servicio en horas."""
-        if not self.fecha_inicio or not self.fecha_completado:
-            return None
-        delta = self.fecha_completado - self.fecha_inicio
-        return int(delta.total_seconds() / 3600)
+        """
+        Verifica si requiere atención inmediata.
+        Basado en fecha_programada y estado.
+        """
+        # Requiere atención si está vencido o próximo a vencer (7 días)
+        if self.esta_vencido:
+            return True
+        
+        dias = self.dias_hasta_vencimiento
+        if dias is not None and dias <= 7:
+            return True
+        
+        # O si está en proceso
+        return self.estado == EstadoMantenimiento.EN_PROCESO
 
     @property
     def costo_total(self) -> Optional[float]:
-        """Calcula el costo total (repuestos + mano de obra)."""
+        """
+        Calcula el costo total.
+        Prioriza costo_real, luego costo_estimado.
+        """
         if self.costo_real is not None:
             return self.costo_real
-        if self.costo_repuestos is not None and self.costo_mano_obra is not None:
-            return self.costo_repuestos + self.costo_mano_obra
         return self.costo_estimado
-
-    @property
-    def variacion_costo(self) -> Optional[float]:
-        """Calcula la variación entre costo estimado y real."""
-        if not self.costo_estimado or not self.costo_real:
-            return None
-        return self.costo_real - self.costo_estimado
-
-    @property
-    def porcentaje_variacion_costo(self) -> Optional[float]:
-        """Calcula el porcentaje de variación de costo."""
-        if not self.costo_estimado or not self.costo_real:
-            return None
-        if self.costo_estimado == 0:
-            return None
-        return ((self.costo_real - self.costo_estimado) / self.costo_estimado) * 100
 
     def __repr__(self) -> str:
         return (
