@@ -413,6 +413,34 @@ class SuscripcionService:
                 "cambiar_plan: Usuario %s cambió de plan_id=%s a plan_id=%s (%s)",
                 usuario_id, plan_anterior_id, nuevo_plan_id, nuevo_plan.nombre_plan
             )
+            
+            # Guardar cambios primero
+            await self.session.commit()
+            await self.session.refresh(suscripcion)
+            
+            # Emitir evento de cambio de plan para enviar email
+            try:
+                from .events import emit_plan_changed
+                
+                # Obtener nombre del plan anterior
+                plan_anterior = await planes_repo.get_plan_by_id(plan_anterior_id)
+                plan_anterior_nombre = plan_anterior.nombre_plan if plan_anterior else "Unknown"
+                
+                await emit_plan_changed(
+                    suscripcion_id=suscripcion.id,
+                    usuario_id=usuario_id,
+                    plan_anterior_id=plan_anterior_id,
+                    plan_anterior_nombre=plan_anterior_nombre,
+                    plan_nuevo_id=nuevo_plan_id,
+                    plan_nuevo_nombre=nuevo_plan.nombre_plan,
+                    changed_by=usuario_id
+                )
+                logger.info(f"Evento PlanChangedEvent emitido para usuario {usuario_id}")
+            except Exception as e:
+                logger.warning(f"Error al emitir evento de cambio de plan: {e}")
+                # No fallar el cambio de plan si falla el envío del email
+            
+            return suscripcion
 
         await self.session.commit()
         await self.session.refresh(suscripcion)

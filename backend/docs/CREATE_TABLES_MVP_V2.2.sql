@@ -36,7 +36,16 @@ CREATE TYPE estado_falla AS ENUM ('detectada', 'en_reparacion', 'resuelta');
 CREATE TYPE origen_deteccion AS ENUM ('sensor', 'ml', 'manual');
 
 -- Mantenimiento
-CREATE TYPE tipo_mantenimiento AS ENUM ('preventivo', 'correctivo', 'inspeccion');
+CREATE TYPE tipo_mantenimiento AS ENUM (
+    'cambio_aceite',
+    'cambio_filtro_aire',
+    'cambio_llantas',
+    'revision_frenos',
+    'ajuste_cadena',
+    'revision_general',
+    'cambio_bateria',
+    'cambio_bujias'
+);
 CREATE TYPE estado_mantenimiento AS ENUM ('pendiente', 'en_proceso', 'completado', 'cancelado');
 
 -- Notificaciones
@@ -774,244 +783,22 @@ CREATE INDEX idx_entrenamientos_activo ON entrenamientos_modelos(activo) WHERE a
 COMMENT ON TABLE entrenamientos_modelos IS 'Tracking de entrenamientos de modelos ML (MLOps básico)';
 COMMENT ON COLUMN entrenamientos_modelos.en_produccion IS 'TRUE si este modelo está activo en producción';
 
--- ============================================
--- SECCIÓN 12: TRIGGERS PARA UPDATED_AT
--- ============================================
+ALTER TABLE suscripciones ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE planes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE motos ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE sensores ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE lecturas ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE parametros ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE modelos_moto ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE plan_caracteristicas ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE caracteristicas ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE componentes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
+ALTER TABLE reglas_estado ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;
 
--- Función genérica para actualizar updated_at
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Aplicar trigger a todas las tablas con updated_at
-DO $$
-DECLARE
-    tabla TEXT;
-BEGIN
-    FOR tabla IN 
-        SELECT table_name 
-        FROM information_schema.columns 
-        WHERE column_name = 'updated_at' 
-        AND table_schema = 'public'
-    LOOP
-        EXECUTE format('
-            CREATE TRIGGER trigger_update_%I_updated_at
-            BEFORE UPDATE ON %I
-            FOR EACH ROW
-            EXECUTE FUNCTION update_updated_at_column();
-        ', tabla, tabla);
-    END LOOP;
-END $$;
-
--- ============================================
--- SECCIÓN 13: FUNCIONES DE LÍMITES FREEMIUM
--- ============================================
-
--- Función para verificar si el usuario puede usar una característica
-CREATE OR REPLACE FUNCTION check_caracteristica_limite(
-    p_usuario_id INTEGER,
-    p_caracteristica_clave VARCHAR(50)
-) RETURNS TABLE (
-    puede_usar BOOLEAN,
-    usos_realizados INTEGER,
-    limite_mensual INTEGER,
-    usos_restantes INTEGER,
-    mensaje TEXT
-) AS $$
-DECLARE
-    v_caracteristica_id INTEGER;
-    v_plan_id INTEGER;
-    v_limite INTEGER;
-    v_uso_actual INTEGER;
-    v_periodo_actual DATE;
-BEGIN
-    v_periodo_actual := DATE_TRUNC('month', CURRENT_DATE)::DATE;
-    
-    SELECT id INTO v_caracteristica_id
-    FROM caracteristicas
-    WHERE clave_funcion = p_caracteristica_clave;
-    
-    IF v_caracteristica_id IS NULL THEN
-        RETURN QUERY SELECT FALSE, 0, 0, 0, 'Característica no encontrada'::TEXT;
-        RETURN;
-    END IF;
-    
-    SELECT s.plan_id INTO v_plan_id
-    FROM usuarios u
-    JOIN suscripciones s ON s.usuario_id = u.id
-    WHERE u.id = p_usuario_id AND u.deleted_at IS NULL;
-    
-    IF v_plan_id IS NULL THEN
-        RETURN QUERY SELECT FALSE, 0, 0, 0, 'Usuario sin suscripción activa'::TEXT;
-        RETURN;
-    END IF;
-    
-    SELECT 
-        CASE 
-            WHEN p.nombre_plan = 'free' THEN c.limite_free
-            WHEN p.nombre_plan = 'pro' THEN c.limite_pro
-            ELSE 0
-        END INTO v_limite
-    FROM caracteristicas c
-    JOIN planes p ON p.id = v_plan_id
-    WHERE c.id = v_caracteristica_id;
-    
-    IF v_limite IS NULL THEN
-        RETURN QUERY SELECT TRUE, 0, -1, -1, 'Uso ilimitado'::TEXT;
-        RETURN;
-    END IF;
-    
-    IF v_limite = 0 THEN
-        RETURN QUERY SELECT FALSE, 0, 0, 0, 'Característica no disponible en tu plan'::TEXT;
-        RETURN;
-    END IF;
-    
-    SELECT COALESCE(usos_realizados, 0) INTO v_uso_actual
-    FROM uso_caracteristicas
-    WHERE usuario_id = p_usuario_id
-        AND caracteristica_id = v_caracteristica_id
-        AND periodo_mes = v_periodo_actual
-        AND deleted_at IS NULL;
-    
-    v_uso_actual := COALESCE(v_uso_actual, 0);
-    
-    IF v_uso_actual >= v_limite THEN
-        RETURN QUERY SELECT 
-            FALSE, 
-            v_uso_actual, 
-            v_limite, 
-            0, 
-            FORMAT('Límite alcanzado: %s/%s usos este mes', v_uso_actual, v_limite)::TEXT;
-        RETURN;
-    END IF;
-    
-    RETURN QUERY SELECT 
-        TRUE, 
-        v_uso_actual, 
-        v_limite, 
-        v_limite - v_uso_actual, 
-        FORMAT('Disponible: %s/%s usos restantes', v_limite - v_uso_actual, v_limite)::TEXT;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION check_caracteristica_limite IS 'Verifica si el usuario puede usar una característica según límites mensuales';
-
--- Función para registrar el uso de una característica
-CREATE OR REPLACE FUNCTION registrar_uso_caracteristica(
-    p_usuario_id INTEGER,
-    p_caracteristica_clave VARCHAR(50)
-) RETURNS TABLE (
-    exito BOOLEAN,
-    usos_actuales INTEGER,
-    limite INTEGER,
-    mensaje TEXT
-) AS $$
-DECLARE
-    v_caracteristica_id INTEGER;
-    v_plan_id INTEGER;
-    v_limite INTEGER;
-    v_periodo_actual DATE;
-    v_usos_actuales INTEGER;
-BEGIN
-    v_periodo_actual := DATE_TRUNC('month', CURRENT_DATE)::DATE;
-    
-    SELECT id INTO v_caracteristica_id
-    FROM caracteristicas
-    WHERE clave_funcion = p_caracteristica_clave;
-    
-    SELECT s.plan_id INTO v_plan_id
-    FROM suscripciones s
-    WHERE s.usuario_id = p_usuario_id;
-    
-    SELECT 
-        CASE 
-            WHEN p.nombre_plan = 'free' THEN c.limite_free
-            WHEN p.nombre_plan = 'pro' THEN c.limite_pro
-            ELSE 0
-        END INTO v_limite
-    FROM caracteristicas c
-    JOIN planes p ON p.id = v_plan_id
-    WHERE c.id = v_caracteristica_id;
-    
-    IF v_limite IS NULL THEN
-        RETURN QUERY SELECT TRUE, 0, -1, 'Uso ilimitado - no se trackea'::TEXT;
-        RETURN;
-    END IF;
-    
-    INSERT INTO uso_caracteristicas (
-        usuario_id,
-        caracteristica_id,
-        periodo_mes,
-        usos_realizados,
-        limite_mensual,
-        ultimo_uso_at
-    ) VALUES (
-        p_usuario_id,
-        v_caracteristica_id,
-        v_periodo_actual,
-        1,
-        v_limite,
-        now()
-    )
-    ON CONFLICT (usuario_id, caracteristica_id, periodo_mes)
-    DO UPDATE SET
-        usos_realizados = uso_caracteristicas.usos_realizados + 1,
-        ultimo_uso_at = now()
-    RETURNING usos_realizados INTO v_usos_actuales;
-    
-    RETURN QUERY SELECT 
-        TRUE, 
-        v_usos_actuales, 
-        v_limite, 
-        FORMAT('Uso registrado: %s/%s', v_usos_actuales, v_limite)::TEXT;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION registrar_uso_caracteristica IS 'Registra un uso de característica y actualiza contador mensual';
-
--- Vista para monitoreo de límites
-CREATE OR REPLACE VIEW v_limites_usuarios AS
-SELECT 
-    u.id AS usuario_id,
-    u.email,
-    u.nombre,
-    u.apellido,
-    p.nombre_plan,
-    c.clave_funcion,
-    c.descripcion AS caracteristica_descripcion,
-    CASE 
-        WHEN p.nombre_plan = 'free' THEN c.limite_free
-        WHEN p.nombre_plan = 'pro' THEN c.limite_pro
-        ELSE NULL
-    END AS limite_mensual,
-    COALESCE(uc.usos_realizados, 0) AS usos_realizados,
-    CASE 
-        WHEN p.nombre_plan = 'free' AND c.limite_free IS NULL THEN -1
-        WHEN p.nombre_plan = 'pro' AND c.limite_pro IS NULL THEN -1
-        WHEN p.nombre_plan = 'free' THEN GREATEST(0, c.limite_free - COALESCE(uc.usos_realizados, 0))
-        WHEN p.nombre_plan = 'pro' THEN GREATEST(0, c.limite_pro - COALESCE(uc.usos_realizados, 0))
-        ELSE 0
-    END AS usos_restantes,
-    uc.ultimo_uso_at,
-    uc.periodo_mes
-FROM usuarios u
-JOIN suscripciones s ON s.usuario_id = u.id
-JOIN planes p ON p.id = s.plan_id
-CROSS JOIN caracteristicas c
-LEFT JOIN uso_caracteristicas uc ON 
-    uc.usuario_id = u.id AND 
-    uc.caracteristica_id = c.id AND 
-    uc.periodo_mes = DATE_TRUNC('month', CURRENT_DATE)::DATE AND
-    uc.deleted_at IS NULL
-WHERE u.deleted_at IS NULL
-    AND s.deleted_at IS NULL;
-
-COMMENT ON VIEW v_limites_usuarios IS 'Vista consolidada de límites y usos por usuario';
-
+ALTER TABLE mensajes ADD COLUMN tokens_usados INTEGER DEFAULT 0;
+ALTER TABLE mensajes ADD COLUMN tiempo_respuesta_ms INTEGER DEFAULT 0;
+ALTER TABLE mensajes ADD COLUMN modelo_usado VARCHAR;
 -- ============================================
 -- SECCIÓN 14: COMENTARIOS FINALES
 -- ============================================

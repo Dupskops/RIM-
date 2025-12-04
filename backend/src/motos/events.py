@@ -93,6 +93,24 @@ class KilometrajeActualizadoEvent(Event):
 KilometrajeUpdatedEvent = KilometrajeActualizadoEvent
 
 
+@dataclass
+class MotoRegisteredEvent(Event):
+    """
+    Evento emitido cuando se registra una nueva moto en el sistema.
+    
+    Suscriptores:
+    - Módulo de notificaciones (enviar email de confirmación al usuario)
+    - Dashboard (actualizar contador de motos)
+    - Analytics (registrar nueva moto para estadísticas)
+    """
+    moto_id: int = 0
+    usuario_id: int = 0
+    placa: str = ""
+    modelo: str = ""
+    email_usuario: str = ""
+    nombre_usuario: str = ""
+
+
 # ============================================
 # FUNCIONES DE EMISIÓN DE EVENTOS
 # ============================================
@@ -180,5 +198,35 @@ async def emit_kilometraje_actualizado(
         moto_id=moto_id,
         kilometraje_anterior=kilometraje_anterior,
         kilometraje_nuevo=kilometraje_nuevo
+    )
+    await event.emit()
+
+
+async def emit_moto_registered(
+    moto_id: int,
+    usuario_id: int,
+    placa: str,
+    modelo: str,
+    email_usuario: str,
+    nombre_usuario: str
+) -> None:
+    """
+    Emite evento cuando se registra una nueva moto.
+    
+    Args:
+        moto_id: ID de la moto registrada
+        usuario_id: ID del usuario propietario
+        placa: Placa de la moto
+        modelo: Modelo de la moto
+        email_usuario: Email del usuario
+        nombre_usuario: Nombre del usuario
+    """
+    event = MotoRegisteredEvent(
+        moto_id=moto_id,
+        usuario_id=usuario_id,
+        placa=placa,
+        modelo=modelo,
+        email_usuario=email_usuario,
+        nombre_usuario=nombre_usuario
     )
     await event.emit()

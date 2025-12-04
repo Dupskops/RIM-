@@ -41,6 +41,7 @@ from src.chatbot.prompts import (
 )
 from src.integraciones.llm_provider import get_llm_provider
 from src.chatbot import validators
+from src.chatbot import token_diagnostics
 
 
 # Constantes de error
@@ -231,8 +232,16 @@ class ChatbotService:
         import time
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"[DEBUG] ChatbotService.process_message iniciado. Message: {message[:50]}...")
+        logger.info(f"[DEBUG] ChatbotService.process_message iniciado. Message: {message}...")
         start_time = time.time()
+        
+        # Analizar contexto si se proporciona
+        if context:
+            context_analysis = token_diagnostics.analyze_context_size(context)
+            if context_analysis.get("warnings"):
+                for warning in context_analysis["warnings"]:
+                    logger.warning(f"[TOKEN_DIAGNOSTICS] {warning}")
+        
         # Validar contexto si se proporciona
         if context and not validators.validate_context_data(context):
             raise ValueError("El contexto proporcionado es inválido o excede el tamaño máximo (50KB)")
@@ -255,10 +264,12 @@ class ChatbotService:
         )
         
         # 4. Generar respuesta del LLM con métricas
+        logger.info(f"[TOKEN_DIAGNOSTICS] Enviando al LLM - System prompt: ~{token_diagnostics.estimate_tokens(system_prompt)} tokens, User prompt: ~{token_diagnostics.estimate_tokens(user_prompt)} tokens")
+        
         response, metrics = await self.llm_provider.generate(
             prompt=user_prompt,
             system_prompt=system_prompt,
-            max_tokens=1000,  # MVP: límite fijo
+            max_tokens=400,  # Reducido de 1000 a 400 para respuestas más rápidas
             temperature=0.7,
             return_metrics=True
         )
@@ -285,6 +296,17 @@ class ChatbotService:
             )
             conversacion.titulo = titulo_generado
             await self.conversacion_repo.update(conversacion)
+        
+        # 8. Log de diagnósticos de tokens
+        end_time = time.time()
+        tiempo_total_ms = int((end_time - start_time) * 1000)
+        token_diagnostics.log_token_usage(
+            conversation_id=conversacion.conversation_id,
+            message=message,
+            context_analysis=context_analysis if context else None,
+            response_tokens=metrics.get("tokens_usados", 0),
+            response_time_ms=tiempo_total_ms
+        )
         
         return response, mensaje_usuario, mensaje_asistente
 
@@ -338,7 +360,7 @@ class ChatbotService:
         async for chunk in self.llm_provider.generate_stream(
             prompt=user_prompt,
             system_prompt=system_prompt,
-            max_tokens=1000,
+            max_tokens=400,  # Reducido de 1000 a 400
             temperature=0.7,
             return_metrics=True
         ):
@@ -472,10 +494,10 @@ class ChatbotService:
         Returns:
             Tuple con (system_prompt, user_prompt)
         """
-        # Obtener historial de mensajes previos (últimos 2 para contexto - optimizado)
+        # Obtener historial de mensajes previos (reducido a 1 para optimizar tokens)
         mensajes_previos = await self.mensaje_repo.get_ultimos_mensajes(
             conversacion_id,
-            limit=2
+            limit=1  # Reducido de 2 a 1 para ahorrar tokens
         )
         
         # Construir contexto de conversación
@@ -592,7 +614,9 @@ class ChatbotService:
         else:  # TipoPrompt.GENERAL
             system_prompt = """Eres un asistente experto en motocicletas del sistema RIM- (Ride Intelligence Monitor).
 Ayudas a los usuarios con información sobre sus motocicletas, mantenimiento, problemas técnicos y mejores prácticas.
-Responde de forma clara, profesional y útil. Si no conoces la respuesta, admítelo y sugiere consultar con un mecánico."""
+
+IMPORTANTE: Responde de forma CONCISA y DIRECTA. Máximo 3 párrafos cortos.
+Si no conoces la respuesta, admítelo y sugiere consultar con un mecánico."""
             user_prompt = message
         
         # Agregar contexto de conversación si existe

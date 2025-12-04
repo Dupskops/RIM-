@@ -13,6 +13,7 @@ from src.mantenimiento.models import Mantenimiento
 from src.ml.models import Prediccion
 from src.sensores.models import Lectura
 from src.suscripciones.models import Suscripcion, Plan
+from src.motos.models import ReglaEstado, Parametro
 
 
 async def build_moto_context(
@@ -70,17 +71,29 @@ async def build_moto_context(
         context['fallas_recientes'] = []
         errors.append(f"fallas: {str(e)}")
     
-    # 4. Mantenimientos (todos) - TEMPORALMENTE DESHABILITADO
-    # TODO: El modelo de Mantenimiento no coincide con el schema de la BD
-    # Necesita actualización para remover columnas inexistentes como 'es_preventivo'
+    # 4. Mantenimientos (todos)
     try:
-        # context['mantenimientos_pendientes'] = await get_mantenimientos_pendientes(moto_id, db)
-        context['mantenimientos_pendientes'] = []
-        logger.info("Mantenimientos deshabilitados temporalmente - modelo desactualizado")
+        context['mantenimientos_pendientes'] = await get_mantenimientos_pendientes(moto_id, db)
     except Exception as e:
         logger.warning(f"Error obteniendo mantenimientos: {e}")
         context['mantenimientos_pendientes'] = []
         errors.append(f"mantenimientos: {str(e)}")
+    
+    # 4.5. Lecturas recientes de sensores (todos)
+    try:
+        context['lecturas_recientes'] = await get_lecturas_recientes_resumidas(moto_id, db)
+    except Exception as e:
+        logger.warning(f"Error obteniendo lecturas de sensores: {e}")
+        context['lecturas_recientes'] = {}
+        errors.append(f"lecturas_sensores: {str(e)}")
+    
+    # 4.6. Reglas de estado para componentes problemáticos (todos)
+    try:
+        context['reglas_estado'] = await get_reglas_estado_componentes(moto_id, db)
+    except Exception as e:
+        logger.warning(f"Error obteniendo reglas de estado: {e}")
+        context['reglas_estado'] = {}
+        errors.append(f"reglas_estado: {str(e)}")
     
     # 5. Datos premium (solo Pro)
     if context.get('user_plan') == 'pro':
@@ -278,13 +291,13 @@ async def get_predicciones_componentes(moto_id: int, db: AsyncSession) -> Dict[s
     }
 
 
-async def get_tendencias_sensores(moto_id: int, db: AsyncSession, limit: int = 10) -> List[Dict[str, Any]]:
+async def get_tendencias_sensores(moto_id: int, db: AsyncSession, limit: int = 5) -> List[Dict[str, Any]]:
     """
-    Obtiene tendencias de sensores (solo Pro).
-    Últimas N lecturas por sensor para análisis de tendencias.
+    Obtiene tendencias de sensores (solo Pro) - OPTIMIZADO.
+    Últimas 24 horas en vez de 7 días para reducir tokens.
     """
-    # Obtener últimas lecturas de los últimos 7 días
-    fecha_limite = datetime.now() - timedelta(days=7)
+    # Obtener últimas lecturas de las últimas 24 horas (antes: 7 días)
+    fecha_limite = datetime.now() - timedelta(hours=24)
     
     query = (
         select(Lectura, Componente)
@@ -292,7 +305,7 @@ async def get_tendencias_sensores(moto_id: int, db: AsyncSession, limit: int = 1
         .where(Lectura.moto_id == moto_id)
         .where(Lectura.ts >= fecha_limite)
         .order_by(Lectura.ts.desc())
-        .limit(limit * 5)  # Multiplicar para tener varias lecturas por componente
+        .limit(limit * 3)  # Reducido: antes era limit * 5
     )
     
     result = await db.execute(query)
@@ -310,9 +323,9 @@ async def get_tendencias_sensores(moto_id: int, db: AsyncSession, limit: int = 1
             'valor': lectura.valor
         })
     
-    # Convertir a lista
+    # Convertir a lista y limitar a top 3 componentes más relevantes
     tendencias = []
-    for comp_nombre, lecturas in tendencias_por_componente.items():
+    for comp_nombre, lecturas in list(tendencias_por_componente.items())[:3]:  # Solo top 3
         tendencias.append({
             'componente': comp_nombre,
             'lecturas_recientes': lecturas[:limit],  # Limitar a N por componente
@@ -320,3 +333,96 @@ async def get_tendencias_sensores(moto_id: int, db: AsyncSession, limit: int = 1
         })
     
     return tendencias
+
+
+async def get_lecturas_recientes_resumidas(moto_id: int, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Obtiene las últimas lecturas de sensores de forma resumida.
+    Solo las últimas 3 lecturas por componente para no sobrecargar el contexto.
+    """
+    from datetime import datetime, timedelta
+    
+    # Últimas 2 horas de lecturas
+    fecha_limite = datetime.now() - timedelta(hours=2)
+    
+    query = (
+        select(Lectura, Componente, Parametro)
+        .join(Componente, Lectura.componente_id == Componente.id)
+        .join(Parametro, Lectura.parametro_id == Parametro.id)
+        .where(Lectura.moto_id == moto_id)
+        .where(Lectura.ts >= fecha_limite)
+        .order_by(Lectura.ts.desc())
+        .limit(30)  # Máximo 30 lecturas totales
+    )
+    
+    result = await db.execute(query)
+    rows = result.all()
+    
+    # Agrupar por componente (solo últimas 3 por componente)
+    lecturas_por_componente = {}
+    for lectura, componente, parametro in rows:
+        comp_nombre = componente.nombre
+        if comp_nombre not in lecturas_por_componente:
+            lecturas_por_componente[comp_nombre] = []
+        
+        # Limitar a 3 lecturas por componente
+        if len(lecturas_por_componente[comp_nombre]) < 3:
+            lecturas_por_componente[comp_nombre].append({
+                'parametro': parametro.nombre,
+                'valor': lectura.valor,
+                'unidad': parametro.unidad_medida,
+                'timestamp': lectura.ts.isoformat() if lectura.ts else None
+            })
+    
+    return lecturas_por_componente
+
+
+async def get_reglas_estado_componentes(moto_id: int, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Obtiene reglas de estado (umbrales) para componentes.
+    Solo para componentes que tienen estado != EXCELENTE/BUENO.
+    """
+    # Primero obtener componentes problemáticos
+    query_estado = (
+        select(EstadoActual, Componente)
+        .join(Componente, EstadoActual.componente_id == Componente.id)
+        .where(EstadoActual.moto_id == moto_id)
+        .where(EstadoActual.estado.in_(['ATENCION', 'CRITICO']))
+    )
+    
+    result_estado = await db.execute(query_estado)
+    componentes_problematicos = result_estado.all()
+    
+    if not componentes_problematicos:
+        return {}
+    
+    # Obtener IDs de componentes problemáticos
+    componente_ids = [comp.id for _, comp in componentes_problematicos]
+    
+    # Obtener reglas para esos componentes
+    query_reglas = (
+        select(ReglaEstado, Componente, Parametro)
+        .join(Componente, ReglaEstado.componente_id == Componente.id)
+        .join(Parametro, ReglaEstado.parametro_id == Parametro.id)
+        .where(ReglaEstado.componente_id.in_(componente_ids))
+    )
+    
+    result_reglas = await db.execute(query_reglas)
+    reglas = result_reglas.all()
+    
+    # Formatear reglas
+    reglas_dict = {}
+    for regla, componente, parametro in reglas:
+        comp_nombre = componente.nombre
+        if comp_nombre not in reglas_dict:
+            reglas_dict[comp_nombre] = {}
+        
+        reglas_dict[comp_nombre][parametro.nombre] = {
+            'logica': regla.logica.value if hasattr(regla.logica, 'value') else regla.logica,
+            'limite_bueno': float(regla.limite_bueno) if regla.limite_bueno else None,
+            'limite_atencion': float(regla.limite_atencion) if regla.limite_atencion else None,
+            'limite_critico': float(regla.limite_critico) if regla.limite_critico else None,
+            'unidad': parametro.unidad_medida
+        }
+    
+    return reglas_dict

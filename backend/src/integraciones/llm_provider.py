@@ -51,7 +51,7 @@ class OllamaProvider:
             timeout: Timeout en segundos para requests (default: 60)
         """
         self.base_url = base_url or getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
-        self.model_name = model or getattr(settings, 'OLLAMA_MODEL', 'llama2')
+        self.model_name = model or getattr(settings, 'OLLAMA_MODEL', 'phi3.5')
         self.timeout = ClientTimeout(total=timeout)
         
         logger.info(f"OllamaProvider inicializado: {self.base_url} - Modelo: {self.model_name}")
@@ -130,9 +130,11 @@ class OllamaProvider:
             "model": self.model_name,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": "60m",
             "options": {
                 "num_predict": max_tokens,
                 "temperature": temperature,
+                "num_ctx": 4096,
             }
         }
         

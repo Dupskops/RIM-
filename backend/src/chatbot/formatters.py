@@ -41,7 +41,15 @@ def format_moto_context_for_llm(context: Dict[str, Any]) -> str:
     if context.get('tendencias_sensores'):
         sections.append(_format_tendencias_sensores(context['tendencias_sensores']))
     
-    # 7. Errores de carga (si los hay)
+    # 7. Lecturas recientes de sensores (todos)
+    if context.get('lecturas_recientes'):
+        sections.append(_format_lecturas_recientes(context['lecturas_recientes']))
+    
+    # 8. Reglas de estado (todos)
+    if context.get('reglas_estado'):
+        sections.append(_format_reglas_estado(context['reglas_estado']))
+    
+    # 9. Errores de carga (si los hay)
     if context.get('_errors'):
         sections.append(_format_errors(context['_errors']))
     
@@ -208,25 +216,49 @@ def _format_predicciones_ml(predicciones: Dict[str, Any]) -> str:
 
 
 def _format_tendencias_sensores(tendencias: List[Dict[str, Any]]) -> str:
-    """Formatea tendencias de sensores (solo Pro)."""
+    """Formatea tendencias de sensores (solo Pro) - OPTIMIZADO."""
     if not tendencias:
-        return "📊 TENDENCIAS DE SENSORES:\n  No hay datos de tendencias disponibles."
+        return "📊 TENDENCIAS: No disponibles"
     
-    text = f"📊 TENDENCIAS DE SENSORES ({len(tendencias)} componentes monitoreados):\n"
-    text += "  (Datos de los últimos 7 días)\n"
+    # Limitar a top 3 componentes más relevantes
+    tendencias_limitadas = tendencias[:3]
     
-    for tend in tendencias:
-        text += f"\n  • {tend.get('componente', 'N/A')}\n"
-        text += f"    Lecturas recientes: {tend.get('total_lecturas', 0)}\n"
-        
-        # Mostrar últimas 3 lecturas como ejemplo
-        lecturas = tend.get('lecturas_recientes', [])[:3]
-        if lecturas:
-            text += f"    Últimas mediciones:\n"
-            for lectura in lecturas:
-                valor = lectura.get('valor', {})
-                timestamp = lectura.get('timestamp', 'N/A')
-                text += f"      - {timestamp}: {valor}\n"
+    text = f"📊 TENDENCIAS ({len(tendencias_limitadas)} componentes):\n"
+    
+    for tend in tendencias_limitadas:
+        # Solo mostrar nombre y total de lecturas, sin detalles
+        text += f"  • {tend.get('componente', 'N/A')}: {tend.get('total_lecturas', 0)} lecturas (24h)\n"
+    
+    return text
+
+
+def _format_lecturas_recientes(lecturas: Dict[str, Any]) -> str:
+    """Formatea lecturas recientes de sensores (formato compacto)."""
+    if not lecturas:
+        return "📡 LECTURAS RECIENTES: No disponibles"
+    
+    text = f"📡 LECTURAS RECIENTES ({len(lecturas)} componentes):\n"
+    
+    for componente, lecturas_comp in lecturas.items():
+        if lecturas_comp:
+            # Solo mostrar la lectura más reciente
+            lectura = lecturas_comp[0]
+            text += f"  • {componente}: {lectura.get('valor')} {lectura.get('unidad', '')}\n"
+    
+    return text
+
+
+def _format_reglas_estado(reglas: Dict[str, Any]) -> str:
+    """Formatea reglas de estado (umbrales) de forma compacta."""
+    if not reglas:
+        return ""
+    
+    text = f"⚙️ UMBRALES ({len(reglas)} componentes):\n"
+    
+    for componente, parametros in reglas.items():
+        text += f"  • {componente}:\n"
+        for param, valores in parametros.items():
+            text += f"    - {param}: BUENO<{valores.get('limite_bueno')}, CRITICO>{valores.get('limite_critico')} {valores.get('unidad', '')}\n"
     
     return text
 
