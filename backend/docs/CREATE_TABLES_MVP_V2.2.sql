@@ -36,7 +36,16 @@ CREATE TYPE estado_falla AS ENUM ('detectada', 'en_reparacion', 'resuelta');
 CREATE TYPE origen_deteccion AS ENUM ('sensor', 'ml', 'manual');
 
 -- Mantenimiento
-CREATE TYPE tipo_mantenimiento AS ENUM ('preventivo', 'correctivo', 'inspeccion');
+CREATE TYPE tipo_mantenimiento AS ENUM (
+    'cambio_aceite',
+    'cambio_filtro_aire',
+    'cambio_llantas',
+    'revision_frenos',
+    'ajuste_cadena',
+    'revision_general',
+    'cambio_bateria',
+    'cambio_bujias'
+);
 CREATE TYPE estado_mantenimiento AS ENUM ('pendiente', 'en_proceso', 'completado', 'cancelado');
 
 -- Notificaciones

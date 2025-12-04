@@ -27,19 +27,18 @@ class Mantenimiento(BaseModel):
     
     # Tipo y estado
     tipo: Mapped[TipoMantenimiento] = mapped_column(
-        SQLEnum(TipoMantenimiento, name="tipo_mantenimiento"),
+        SQLEnum(TipoMantenimiento, name="tipo_mantenimiento", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         index=True
     )
     estado: Mapped[EstadoMantenimiento] = mapped_column(
-        SQLEnum(EstadoMantenimiento, name="estado_mantenimiento"),
+        SQLEnum(EstadoMantenimiento, name="estado_mantenimiento", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=EstadoMantenimiento.PENDIENTE,
         index=True
     )
     
-    # Origen del mantenimiento
-    es_preventivo: Mapped[bool] = mapped_column(default=True)
+    # Origen del mantenimiento (falla relacionada)
     falla_relacionada_id: Mapped[Optional[int]] = mapped_column(
         Integer, 
         ForeignKey("fallas.id"), 
@@ -47,43 +46,20 @@ class Mantenimiento(BaseModel):
     )
     
     # Kilometraje
-    kilometraje_actual: Mapped[int] = mapped_column(Integer, nullable=False)
+    kilometraje_actual: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     kilometraje_siguiente: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     
     # Fechas
     fecha_programada: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    fecha_inicio: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     fecha_completado: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    fecha_vencimiento: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     
     # Detalles del servicio
-    descripcion: Mapped[str] = mapped_column(Text, nullable=False)
+    descripcion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notas_tecnico: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    repuestos_usados: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    
-    # Personal
-    mecanico_asignado: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    taller_realizado: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     
     # Costos
     costo_estimado: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     costo_real: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    costo_repuestos: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    costo_mano_obra: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    
-    # Recordatorios y alertas
-    dias_anticipacion_alerta: Mapped[int] = mapped_column(Integer, default=7)
-    alerta_enviada: Mapped[bool] = mapped_column(default=False)
-    fecha_alerta_enviada: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    
-    # Prioridad y urgencia
-    prioridad: Mapped[int] = mapped_column(Integer, default=3)  # 1-5 (1=baja, 5=crítica)
-    es_urgente: Mapped[bool] = mapped_column(default=False)
-    
-    # ML/IA predictions
-    recomendado_por_ia: Mapped[bool] = mapped_column(default=False)
-    confianza_prediccion: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    modelo_ia_usado: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     
     # Relaciones
     moto = relationship("Moto", back_populates="mantenimientos")

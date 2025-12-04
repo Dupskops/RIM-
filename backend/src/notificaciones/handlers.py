@@ -30,6 +30,7 @@ async def handle_user_registered(event) -> None:
         async for db in get_db():
             # Crear servicios y use case con dependencias
             from src.notificaciones.repositories import NotificacionRepository, PreferenciaNotificacionRepository
+            from src.notificaciones.models import PreferenciaNotificacion
             from src.shared.event_bus import event_bus
             
             notif_repo = NotificacionRepository(db)
@@ -37,12 +38,36 @@ async def handle_user_registered(event) -> None:
             notif_service = NotificacionService(notif_repo, pref_repo)
             use_case = CrearNotificacionUseCase(notif_service, event_bus)
             
+            # NUEVO: Crear preferencias de notificaciones por defecto si no existen
+            usuario_id = int(event.user_id)
+            existing_prefs = await pref_repo.get_by_usuario(usuario_id)
+            
+            if not existing_prefs:
+                logger.info(f"📝 Creando preferencias de notificaciones por defecto para usuario {usuario_id}")
+                default_prefs = PreferenciaNotificacion(
+                    usuario_id=usuario_id,
+                    canales_habilitados={
+                        "in_app": True,
+                        "email": True,      # Email habilitado por defecto
+                        "push": True,       # Push habilitado por defecto
+                        "sms": False        # SMS deshabilitado
+                    },
+                    tipos_habilitados={
+                        "fallas": True,
+                        "mantenimiento": True,
+                        "predicciones": True
+                    }
+                )
+                await pref_repo.create(default_prefs)
+                await db.commit()
+                logger.info(f"✅ Preferencias creadas: email=ON, push=ON, sms=OFF")
+            
             # Crear notificación
             logger.info(f"DEBUG: TipoNotificacion.INFO.value = {TipoNotificacion.INFO.value}")
             logger.info(f"DEBUG: Passing tipo={TipoNotificacion.INFO.value} to use_case")
             
             notificacion = await use_case.execute(
-                usuario_id=int(event.user_id),
+                usuario_id=usuario_id,
                 tipo=TipoNotificacion.INFO.value,
                 titulo="¡Bienvenido a RIM!",
                 mensaje=f"Hola {event.nombre}, gracias por registrarte en RIM - Sistema Inteligente de Moto. "
@@ -128,6 +153,48 @@ async def handle_password_changed(event) -> None:
         
     except Exception as e:
         logger.error(f"❌ Error enviando alerta de cambio de contraseña: {str(e)}")
+
+
+async def handle_moto_registered(event) -> None:
+    """
+    Handler: Enviar email de confirmación cuando se registra una nueva moto.
+    Evento: MotoRegisteredEvent
+    """
+    try:
+        logger.info(f"🏍️ Enviando email de confirmación de registro de moto a usuario {event.usuario_id}")
+        
+        async for db in get_db():
+            from src.notificaciones.repositories import NotificacionRepository, PreferenciaNotificacionRepository
+            from src.shared.event_bus import event_bus
+            
+            notif_repo = NotificacionRepository(db)
+            pref_repo = PreferenciaNotificacionRepository(db)
+            notif_service = NotificacionService(notif_repo, pref_repo)
+            use_case = CrearNotificacionUseCase(notif_service, event_bus)
+            
+            # Crear notificación
+            notificacion = await use_case.execute(
+                usuario_id=event.usuario_id,
+                tipo=TipoNotificacion.INFO.value,
+                titulo=f"¡Moto registrada exitosamente! 🏍️",
+                mensaje=f"Tu moto {event.modelo} con placa {event.placa} ha sido registrada en RIM. "
+                        f"Ahora puedes disfrutar de monitoreo en tiempo real, detección de fallas y mantenimiento predictivo.",
+                canal=CanalNotificacion.EMAIL.value
+            )
+            
+            # Guardar datos para el email
+            notificacion.email_destino = event.email_usuario
+            notificacion.nombre_usuario = event.nombre_usuario
+            
+            # Enviar email
+            await notif_service.enviar_notificacion(notificacion.id, notificacion_obj=notificacion)
+            
+            break
+            
+        logger.info(f"✅ Email de confirmación de moto enviado a {event.email_usuario}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error enviando email de confirmación de moto: {str(e)}")
 
 
 # ============================================

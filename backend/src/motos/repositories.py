@@ -109,6 +109,17 @@ class MotoRepository:
         )
         return result.scalar_one_or_none()
     
+    async def get_by_placa(self, placa: str) -> Optional[Moto]:
+        """
+        Obtiene una moto por su placa (license plate).
+        
+        Usado en: CreateMotoUseCase (validar unicidad placa)
+        """
+        result = await self.session.execute(
+            select(Moto).where(Moto.placa == placa)
+        )
+        return result.scalar_one_or_none()
+    
     async def list(
         self,
         usuario_id: Optional[int] = None,
@@ -134,6 +145,20 @@ class MotoRepository:
         
         result = await self.session.execute(query)
         return result.scalars().all()
+    
+    async def count_by_usuario(self, usuario_id: int) -> int:
+        """
+        Cuenta el número de motos que tiene un usuario.
+        
+        Usado en: CreateMotoUseCase (validar límite MULTI_BIKE)
+        """
+        from sqlalchemy import func
+        
+        result = await self.session.execute(
+            select(func.count(Moto.id)).where(Moto.usuario_id == usuario_id)
+        )
+        return result.scalar() or 0
+
     
     async def update(self, moto_id: int, update_data: Dict[str, Any]) -> Moto:
         """

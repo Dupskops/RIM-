@@ -319,6 +319,27 @@ async def send_password_reset_email(event: Any) -> None:
 
 
 # ============================================
+# HANDLERS: MOTOS → NOTIFICACIONES
+# ============================================
+
+async def send_moto_confirmation_email(event: Any) -> None:
+    """
+    Enviar email de confirmación cuando se registra una nueva moto.
+    Evento escuchado: MotoRegisteredEvent (motos)
+    Delega al módulo de notificaciones para crear y enviar el email.
+    """
+    try:
+        from src.notificaciones.handlers import handle_moto_registered
+        
+        logger.info(f"🏍️ Procesando email de confirmación de moto {event.placa}")
+        await handle_moto_registered(event)
+        logger.info(f"✅ Email de confirmación de moto procesado exitosamente")
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando email de confirmación de moto: {str(e)}", exc_info=True)
+
+
+# ============================================
 # HANDLERS: SUSCRIPCIONES → NOTIFICACIONES
 # ============================================
 
@@ -382,6 +403,9 @@ REGISTERED_HANDLERS = {
     # Auth → Notificaciones
     "UserRegisteredEvent": ["send_welcome_email"],
     "PasswordResetRequestedEvent": ["send_password_reset_email"],
+    
+    # Motos → Notificaciones
+    "MotoRegisteredEvent": ["send_moto_confirmation_email"],
     
     # Suscripciones → Notificaciones
     "SuscripcionUpgradedEvent": ["send_subscription_upgrade_confirmation"],

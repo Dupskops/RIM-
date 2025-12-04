@@ -73,7 +73,7 @@ apiClient.interceptors.response.use(
       if (!refreshToken) {
         // No hay refresh token, cerrar sesión
         clearAuthTokens();
-        window.location.href = '/login';
+        window.location.href = '/auth/login';
         return Promise.reject(error);
       }
 
@@ -105,7 +105,7 @@ apiClient.interceptors.response.use(
         // Error al renovar el token, cerrar sesión
         processQueue(refreshError, null);
         clearAuthTokens();
-        window.location.href = '/login';
+        window.location.href = '/auth/login';
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

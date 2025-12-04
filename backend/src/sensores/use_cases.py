@@ -544,6 +544,7 @@ class ProvisionSensorsUseCase:
             
             # 2. Obtener templates por modelo
             modelo_nombre: str = moto.modelo_moto.nombre
+            modelo_moto_id: int = moto.modelo_moto_id
             templates = await self.template_repo.get_by_modelo(modelo_nombre)
             
             if not templates:
@@ -556,47 +557,52 @@ class ProvisionSensorsUseCase:
                     "templates_procesados": 0
                 }
             
-            # 3. Agrupar por tipo de componente
+            # 3. Obtener componentes existentes del modelo
+            from src.motos.repositories import ComponenteRepository
+            componente_repo_modelo = ComponenteRepository(self.db)
+            componentes_modelo = await componente_repo_modelo.list_by_modelo(modelo_moto_id)
+            
+            if not componentes_modelo:
+                logger.error(f"No hay componentes definidos para modelo_moto_id={modelo_moto_id}")
+                raise NotFoundError(f"No hay componentes para el modelo {modelo_nombre}")
+            
+            # Crear mapa de componentes por mesh_id_3d para búsqueda rápida
+            # El mesh_id_3d del componente coincide con component_type del template
+            componentes_map = {comp.mesh_id_3d: comp for comp in componentes_modelo if comp.mesh_id_3d}
+            
+            logger.debug(f"Componentes disponibles: {list(componentes_map.keys())}")
+            
+            # 4. Agrupar templates por componente
             grouped = self.service.group_templates_by_component(templates)
             
-            componentes_creados: List[Componente] = []
             sensores_creados: List[Sensor] = []
             
-            # 4. Crear componentes y sensores
+            # 5. Crear sensores usando componentes existentes
             for component_type, component_templates in grouped.items():
                 logger.debug(
                     f"Procesando componente: tipo={component_type}, "
                     f"{len(component_templates)} templates"
                 )
                 
-                # 4a. Crear componente
-                componente_data_prep = self.service.prepare_componente_from_template(
-                    template=component_templates[0],  # Usar primer template para metadata
-                    moto_id=moto_id
-                )
+                # 5a. Buscar componente existente por component_type del template
+                template_sample = component_templates[0]
+                component_type = template_sample.definition.get("component_type")
                 
-                componente_data: Dict[str, Any] = {
-                    "moto_id": moto_id,
-                    "tipo": componente_data_prep["tipo"],
-                    "nombre": componente_data_prep["nombre"],
-                    # Estado inicial compatible con EstadoSalud
-                    "estado": EstadoSalud.BUENO,
-                    "extra_data": {
-                        "sensor_count": len(component_templates),
-                        "auto_provisioned": True
-                    }
-                }
-
-                componente = await self.componente_repo.create(componente_data)
+                if not component_type:
+                    logger.warning(f"Template {template_sample.id} no tiene component_type, saltando")
+                    continue
                 
-                componentes_creados.append(componente)
-                logger.info(
-                    f"Componente creado: id={componente.id}, nombre={componente.nombre}"
-                )
+                componente = componentes_map.get(component_type)
+                if not componente:
+                    logger.warning(
+                        f"No se encontró componente con tipo={component_type} "
+                        f"para modelo {modelo_nombre}, saltando"
+                    )
+                    continue
                 
-                # 4b. Crear sensores
-                # NOTA: Para MVP, asumimos que cada template mapea a un parámetro específico
-                # En producción, el template debería incluir parametro_id o el sistema debe inferirlo
+                logger.debug(f"Usando componente existente: id={componente.id}, nombre={componente.nombre}")
+                
+                # 5b. Crear sensores para este componente
                 for template in component_templates:
                     # TODO: Obtener parametro_id correcto desde template.definition o repositorio
                     # Por ahora, placeholder temporal (debe ser reemplazado con lógica real)
@@ -627,7 +633,8 @@ class ProvisionSensorsUseCase:
                     logger.debug(f"Sensor creado: id={sensor.id}, tipo={sensor.tipo}")
             
             result: Dict[str, Any] = {
-                "componentes_creados": len(componentes_creados),
+                "componentes_creados": 0,  # No creamos componentes, usamos existentes
+                "componentes_usados": len(componentes_map),
                 "sensores_creados": len(sensores_creados),
                 "templates_procesados": len(templates),
                 "moto_id": moto_id,
@@ -635,8 +642,8 @@ class ProvisionSensorsUseCase:
             }
             
             logger.info(
-                f"Provisión completada: {result['componentes_creados']} componentes, "
-                f"{result['sensores_creados']} sensores"
+                f"Provisión completada: {result['componentes_usados']} componentes usados, "
+                f"{result['sensores_creados']} sensores creados"
             )
             
             return result

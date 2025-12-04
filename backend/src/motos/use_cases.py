@@ -24,6 +24,9 @@ class CreateMotoUseCase:
         self.service = MotoService()
     
     async def execute(self, data: MotoCreateSchema, usuario_id: int) -> MotoReadSchema:
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Validaciones de negocio adicionales (Pydantic ya validó formato)
         try:
             if data.kilometraje_actual:
@@ -41,6 +44,15 @@ class CreateMotoUseCase:
         if not modelo:
             raise NotFoundError(ERROR_MODELO_NOT_FOUND)
         
+        # NUEVO: Validar límite de motos según plan de suscripción (MULTI_BIKE)
+        try:
+            await self._validar_limite_multi_bike(usuario_id)
+        except ValidationError:
+            raise  # Re-lanzar el error de validación
+        except Exception as e:
+            logger.warning(f"Error al validar límite MULTI_BIKE para usuario {usuario_id}: {e}")
+            # Continuar si falla la validación del límite (failsafe)
+        
         moto_data = self.service.prepare_moto_data(data.model_dump(), usuario_id)
         moto = await self.repo.create(moto_data)
         
@@ -51,10 +63,118 @@ class CreateMotoUseCase:
             modelo_moto_id=moto.modelo_moto_id
         )
         
-        # Nota: La provisión de sensores se hace desde el módulo 'sensores'
-        # usando SensorTemplates cuando se llama al endpoint de provisión
+        # NUEVO: Crear mantenimientos programados iniciales
+        try:
+            await self._crear_mantenimientos_iniciales(
+                moto.id,
+                int(moto.kilometraje_actual) if moto.kilometraje_actual else 0
+            )
+            logger.info(f"Mantenimientos iniciales creados para moto {moto.id}")
+        except Exception as e:
+            logger.warning(f"Error al crear mantenimientos iniciales para moto {moto.id}: {e}")
+            # No fallar el registro de la moto si falla la creación de mantenimientos
+        
+        # NUEVO: Provisionar sensores automáticamente
+        try:
+            await self._provision_sensores_iniciales(moto.id, modelo.nombre)
+            logger.info(f"Sensores provisionados automáticamente para moto {moto.id}")
+        except Exception as e:
+            logger.warning(f"Error al provisionar sensores para moto {moto.id}: {e}")
+            # No fallar el registro de la moto si falla la provisión de sensores
+        
+        # NUEVO: Emitir evento de moto registrada para enviar email de confirmación
+        try:
+            from src.motos.events import emit_moto_registered
+            from src.auth.repositories import UsuarioRepository
+            
+            # Obtener datos del usuario para el email
+            usuario_repo = UsuarioRepository(self.db)
+            usuario = await usuario_repo.get_by_id(usuario_id)
+            
+            if usuario:
+                await emit_moto_registered(
+                    moto_id=moto.id,
+                    usuario_id=usuario_id,
+                    placa=moto.placa,
+                    modelo=modelo.nombre,
+                    email_usuario=usuario.email,
+                    nombre_usuario=usuario.nombre
+                )
+                logger.info(f"Evento MotoRegisteredEvent emitido para moto {moto.id}")
+        except Exception as e:
+            logger.warning(f"Error al emitir evento de moto registrada: {e}")
+            # No fallar el registro si falla el envío del email
         
         return MotoReadSchema.model_validate(moto)
+    
+    async def _validar_limite_multi_bike(self, usuario_id: int) -> None:
+        """
+        Valida si el usuario puede crear otra moto según su plan de suscripción.
+        
+        Plan Free: máximo 2 motos (MULTI_BIKE limite_free = 2)
+        Plan Pro: motos ilimitadas (MULTI_BIKE limite_pro = NULL)
+        
+        Raises:
+            ValidationError: Si el usuario ha alcanzado el límite de motos
+        """
+        from src.suscripciones.services import LimiteService
+        
+        # Verificar límite de la característica MULTI_BIKE
+        limite_service = LimiteService(self.db)
+        resultado = await limite_service.check_limite(usuario_id, 'MULTI_BIKE')
+        
+        if not resultado["puede_usar"]:
+            # El usuario ha alcanzado el límite de motos
+            limite = resultado.get("limite")
+            if limite == 0:
+                raise ValidationError(
+                    "La característica de múltiples motos no está disponible en tu plan. "
+                    "Actualiza a Pro para registrar motos."
+                )
+            else:
+                raise ValidationError(
+                    f"Has alcanzado el límite de {limite} motos en tu plan Free. "
+                    "Actualiza a Pro para registrar motos ilimitadas."
+                )
+        
+        # Si puede usar, contar motos actuales para registrar el uso después
+        motos_actuales = await self.repo.count_by_usuario(usuario_id)
+        
+        # Si ya tiene motos y el límite no es ilimitado, verificar contra el límite
+        if resultado["limite"] is not None and motos_actuales >= resultado["limite"]:
+            raise ValidationError(
+                f"Has alcanzado el límite de {resultado['limite']} motos en tu plan. "
+                "Actualiza a Pro para registrar motos ilimitadas."
+            )
+    
+    async def _provision_sensores_iniciales(self, moto_id: int, modelo_nombre: str) -> None:
+        """
+        Provisiona sensores automáticamente para una moto recién registrada.
+        
+        Llama al ProvisionSensorsUseCase del módulo de sensores.
+        """
+        from src.sensores.use_cases import ProvisionSensorsUseCase
+        
+        provision_use_case = ProvisionSensorsUseCase(self.db)
+        result = await provision_use_case.execute(moto_id=moto_id)
+        
+        return result
+    
+    async def _crear_mantenimientos_iniciales(self, moto_id: int, kilometraje_actual: int) -> None:
+        """
+        Crea mantenimientos programados iniciales para una moto recién registrada.
+        
+        Llama a la función crear_mantenimientos_iniciales del módulo de mantenimiento.
+        """
+        from src.mantenimiento.services import crear_mantenimientos_iniciales
+        
+        mantenimientos = await crear_mantenimientos_iniciales(
+            db=self.db,
+            moto_id=moto_id,
+            kilometraje_actual=kilometraje_actual
+        )
+        
+        return mantenimientos
 
 
 class GetMotoUseCase:
