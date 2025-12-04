@@ -70,8 +70,10 @@ async def handle_user_registered(event) -> None:
                 usuario_id=usuario_id,
                 tipo=TipoNotificacion.INFO.value,
                 titulo="¡Bienvenido a RIM!",
-                mensaje=f"Hola {event.nombre}, gracias por registrarte en RIM - Sistema Inteligente de Moto. "
-                        f"Tu cuenta ha sido creada exitosamente. Email: {event.email}",
+                mensaje=(
+                    f"Hola {event.nombre}, gracias por registrarte en RIM - Sistema Inteligente de Moto. "
+                    f"Tu cuenta ha sido creada exitosamente. Email: {event.email}"
+                ),
                 canal=CanalNotificacion.EMAIL.value
             )
             
@@ -79,15 +81,44 @@ async def handle_user_registered(event) -> None:
             notificacion.email_destino = event.email
             notificacion.nombre_usuario = event.nombre
             
-            # Enviar el email inmediatamente
+            # Enviar el email inmediatamente (lo mantenemos)
             await notif_service.enviar_notificacion(notificacion.id, notificacion_obj=notificacion)
-            
+
+            # 2️⃣ Notificación IN_APP: "¡Bienvenido a RIM!"
+            await use_case.execute(
+                usuario_id=int(event.user_id),
+                tipo=TipoNotificacion.INFO.value,
+                titulo="¡Bienvenido a RIM!",
+                mensaje=(
+                    f"Hola {event.nombre}, gracias por registrarte en RIM - Sistema Inteligente de Moto. "
+                    "Desde aquí podrás gestionar tus motos, ver alertas y recibir recomendaciones."
+                ),
+                canal=CanalNotificacion.IN_APP.value,
+                referencia_tipo=None,
+                referencia_id=None,
+            )
+
+            # 3️⃣ Notificación IN_APP: "Registra tu moto para empezar"
+            await use_case.execute(
+                usuario_id=int(event.user_id),
+                tipo=TipoNotificacion.INFO.value,
+                titulo="Registra tu moto para empezar",
+                mensaje=(
+                    "Para comenzar a recibir diagnósticos y alertas personalizadas, "
+                    "registra tu primera moto en RIM desde la sección 'Mis motos'."
+                ),
+                canal=CanalNotificacion.IN_APP.value,
+                referencia_tipo=None,
+                referencia_id=None,
+            )
+
             break
             
-        logger.info(f"✅ Email de bienvenida enviado a {event.email}")
+        logger.info(f"✅ Email y notificaciones de bienvenida creadas para {event.email}")
         
     except Exception as e:
         logger.error(f"❌ Error enviando email de bienvenida: {str(e)}")
+
 
 
 async def handle_password_reset_requested(event) -> None:

@@ -44,9 +44,10 @@ from src.notificaciones.use_cases import (
     ObtenerPreferenciasUseCase,
     ActualizarPreferenciasUseCase
 )
-from src.shared.event_bus import get_event_bus
+from src.shared.event_bus import event_bus, get_event_bus
 #Import del connection_manager
 from src.shared.websocket import (connection_manager) 
+from src.notificaciones.models import TipoNotificacion, CanalNotificacion
 
 router = APIRouter()
 
@@ -143,6 +144,64 @@ async def crear_notificacion_masiva(
             ]
         )
     )
+
+#Ruta para generar notifiaciones 
+@router.post("/seed-demo", response_model=SuccessResponse[None])
+async def seed_demo_notificaciones(
+    usuario: Usuario = Depends(get_current_user),
+    service: NotificacionService = Depends(get_notificacion_service),
+    event_bus = Depends(get_event_bus),
+):
+    """
+    Crea un lote de notificaciones 'previas' para el usuario logueado.
+    La idea es que el frontend las vaya consumiendo poco a poco.
+    """
+
+    use_case = CrearNotificacionUseCase(service, event_bus)
+
+    notificaciones_demo = [
+        {
+            "titulo": "Bienvenido a RIM",
+            "mensaje": "Este es tu centro de notificaciones. Aquí verás alertas y recomendaciones para tu moto.",
+            "tipo": TipoNotificacion.INFO,
+        },
+        {
+            "titulo": "Revisión preventiva recomendada",
+            "mensaje": "Tu moto ha superado los 4,500 km desde el último mantenimiento. Revisa frenos y llantas.",
+            "tipo": TipoNotificacion.WARNING,
+        },
+        {
+            "titulo": "Chequeo de sensores",
+            "mensaje": "Hemos detectado pequeñas variaciones en la temperatura del motor. Te recomendamos un diagnóstico.",
+            "tipo": TipoNotificacion.ALERT,
+        },
+        {
+            "titulo": "Todo en orden",
+            "mensaje": "En las últimas 24 horas no se han detectado fallas críticas en tu moto.",
+            "tipo": TipoNotificacion.SUCCESS,
+        },
+    ]
+
+    for item in notificaciones_demo:
+        # Se crean como notificación IN_APP
+        await use_case.execute(
+            usuario_id=usuario.id,
+            titulo=item["titulo"],
+            mensaje=item["mensaje"],
+            tipo=item["tipo"],
+            canal=CanalNotificacion.IN_APP,
+            referencia_tipo=None,
+            referencia_id=None,
+        )
+        # Ojo: aquí NO hacemos broadcast WebSocket, para que tu componente
+        # que consulta cada 30s las vaya sacando de la BD.
+
+    return SuccessResponse(
+        success=True,
+        message="Notificaciones demo creadas correctamente.",
+        data=None,
+    )
+
 
 
 @router.get("", response_model=PaginatedResponse[NotificacionResponse])

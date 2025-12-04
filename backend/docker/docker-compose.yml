@@ -59,13 +59,13 @@ services:
     networks:
       - rim-network
     # Descomentar si tienes GPU NVIDIA
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
     healthcheck:
