@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { User, Wrench, Edit2, LogOut } from 'lucide-react';
-import { useAuthStore } from '@/store';
+import { useAuthStore, useSuscripcionStore } from '@/store';
 import { useNavigate } from '@tanstack/react-router';
+import { suscripcionesService, type Plan as ApiPlan } from '@/services';
+import Swal from 'sweetalert2';
 
 type Vehicle = {
     id: number;
@@ -34,6 +36,8 @@ type Plan = {
     resumen: string;
     incluye: string[];
 };
+
+type PlanDisplay = Plan;
 
 type UserProfile = {
     nombre: string;
@@ -70,6 +74,11 @@ const MiPerfilPage: React.FC = () => {
     const loadUser = useAuthStore((s) => s.loadUser);
     const navigate = useNavigate();
 
+    // Suscripción del usuario
+    const suscripcion = useSuscripcionStore((s) => s.suscripcion);
+    const loadSuscripcion = useSuscripcionStore((s) => s.loadSuscripcion);
+    const cambiarPlan = useSuscripcionStore((s) => s.cambiarPlan);
+
     useEffect(() => {
         if (!authUser) {
             // intentar cargar el usuario desde la API / sesión si no está en el store
@@ -79,6 +88,11 @@ const MiPerfilPage: React.FC = () => {
         }
     }, [authUser, loadUser]);
 
+    // Cargar suscripción del usuario
+    useEffect(() => {
+        loadSuscripcion();
+    }, [loadSuscripcion]);
+
     const [vehicles, setVehicles] = useState<Vehicle[]>(() => [
         { id: 1, marca: 'KTM', modelo: 'Duke 390', anio: 2021, placa: 'ABC-123', vin: 'VIN123456789', km: 12450, color: 'Naranja', ultimaRevision: '10/09/2025' },
     ]);
@@ -87,29 +101,45 @@ const MiPerfilPage: React.FC = () => {
         { id: 1, fecha: '10/09/2025', motivo: 'Revisión periódica', resultado: 'Cambio aceite y revisión frenos', componentes: ['Aceite', 'Frenos'], desgaste: '85%', reparaciones: 'Cambio aceite', costo: '$120.000', tecnico: 'Taller MotoService' },
     ]);
 
-    // planes disponibles
-    const [plans] = useState<Plan[]>(() => [
-        {
-            id: 1, nombre: 'Freemium', precio: 'Gratis', resumen: 'Acceso a funciones básicas de monitoreo y chatbot limitado', incluye:
-                ['Registro de vehículo',
-                    'Historial básico',
-                    'Notificaciones básicas',
-                    'Chatbot con límite de consultas',
-                    'Acceso completo a la app con límite de interacciones']
-        },
-        {
-            id: 2, nombre: 'Premium', precio: '$9.90/mes', resumen: 'Soporte completo, sin límites y funciones avanzadas', incluye:
-                ['Recordatorios personalizados',
-                    'Descuentos en talleres',
-                    'Soporte prioritario',
-                    'Reportes avanzados',
-                    'Acceso ilimitado al chatbot',
-                    'Consultas ilimitadas al chatbot',
-                    'Acceso a funciones exclusivas de la app',
-                    'Análisis de datos detallado',
-                    'Asesoramiento personalizado en mantenimiento']
-        },
-    ]);
+    // planes disponibles desde la API
+    const [plans, setPlans] = useState<PlanDisplay[]>([]);
+    const [loadingPlans, setLoadingPlans] = useState(true);
+    const [errorPlans, setErrorPlans] = useState<string | null>(null);
+
+    // Cargar planes desde la API
+    useEffect(() => {
+        const fetchPlanes = async () => {
+            try {
+                setLoadingPlans(true);
+                setErrorPlans(null);
+                const planesData = await suscripcionesService.getPlanes();
+                
+                // Transformar los datos de la API al formato de visualización
+                const planesDisplay: PlanDisplay[] = planesData.map((plan) => ({
+                    id: plan.id,
+                    nombre: plan.nombre_plan.charAt(0).toUpperCase() + plan.nombre_plan.slice(1),
+                    precio: plan.precio === '0.00' ? 'Gratis' : `$${plan.precio}/${plan.periodo_facturacion}`,
+                    resumen: `Plan ${plan.nombre_plan} - ${plan.caracteristicas.length} características`,
+                    incluye: plan.caracteristicas.map((c) => {
+                        if (c.limite_free !== null || c.limite_pro !== null) {
+                            const limite = plan.nombre_plan === 'free' ? c.limite_free : c.limite_pro;
+                            return `${c.descripcion} ${limite ? `(${limite})` : ''}`;
+                        }
+                        return c.descripcion;
+                    }),
+                }));
+                
+                setPlans(planesDisplay);
+            } catch (error) {
+                console.error('Error al cargar planes:', error);
+                setErrorPlans('No se pudieron cargar los planes. Intenta nuevamente.');
+            } finally {
+                setLoadingPlans(false);
+            }
+        };
+
+        fetchPlanes();
+    }, []);
 
     const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
     const closePlanModal = () => setSelectedPlan(null);
@@ -132,6 +162,89 @@ const MiPerfilPage: React.FC = () => {
     const saveVehicle = () => { if (!tempVehicle) return; setVehicles((prev) => prev.map((p) => p.id === tempVehicle.id ? tempVehicle : p)); setEditVehicleId(null); setTempVehicle(null); };
     const cancelVehicle = () => { setEditVehicleId(null); setTempVehicle(null); };
 
+    // Manejar cambio de plan
+    const handleCambiarPlan = async (planId: number, planNombre: string) => {
+        // Verificar si es el plan actual
+        if (suscripcion && suscripcion.plan.id === planId) {
+            await Swal.fire({
+                title: 'Plan actual',
+                text: `Ya tienes el plan ${planNombre}`,
+                icon: 'info',
+                confirmButtonColor: '#00D9FF',
+            });
+            return;
+        }
+
+        // Determinar si es upgrade o downgrade
+        const isUpgrade = suscripcion && planId > suscripcion.plan.id;
+        const actionText = isUpgrade ? 'mejorar' : 'cambiar';
+
+        const result = await Swal.fire({
+            title: `¿${isUpgrade ? 'Mejorar' : 'Cambiar'} plan?`,
+            text: `¿Deseas ${actionText} al plan ${planNombre}?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#00D9FF',
+            cancelButtonColor: '#d33',
+            confirmButtonText: `Sí, ${actionText}`,
+            cancelButtonText: 'Cancelar',
+        });
+
+        if (result.isConfirmed) {
+            try {
+                await cambiarPlan(planId);
+                await Swal.fire({
+                    title: '¡Éxito!',
+                    text: `Plan cambiado a ${planNombre} exitosamente`,
+                    icon: 'success',
+                    confirmButtonColor: '#00D9FF',
+                });
+            } catch (error) {
+                await Swal.fire({
+                    title: 'Error',
+                    text: 'No se pudo cambiar el plan. Intenta nuevamente.',
+                    icon: 'error',
+                    confirmButtonColor: '#00D9FF',
+                });
+            }
+        }
+    };
+
+    // Determinar el texto y estilo del botón según el plan
+    const getPlanButtonInfo = (planId: number) => {
+        if (!suscripcion) {
+            return {
+                text: 'Suscribirse',
+                className: 'bg-[var(--accent)] text-[#071218] hover:bg-[var(--accent)]/80',
+                disabled: false,
+            };
+        }
+
+        const currentPlanId = suscripcion.plan.id;
+
+        if (currentPlanId === planId) {
+            return {
+                text: 'Plan actual',
+                className: 'bg-green-500/20 text-green-400 cursor-default',
+                disabled: true,
+            };
+        }
+
+        if (planId > currentPlanId) {
+            return {
+                text: 'Mejorar plan',
+                className: 'bg-gradient-to-r from-[var(--accent)] to-blue-500 text-[#071218] hover:opacity-90',
+                disabled: false,
+            };
+        }
+
+        return {
+            text: 'Cambiar plan',
+            className: 'bg-orange-500/80 text-white hover:bg-orange-500',
+            disabled: false,
+        };
+    };
+
     return (
         <div className="bg-[var(--bg)] text-white p-4 mb-18">
             <div className="max-w-5xl mx-auto">
@@ -142,6 +255,11 @@ const MiPerfilPage: React.FC = () => {
                     <div>
                         <h1 className="text-3xl font-bold text-[var(--card)]">{authUser?.nombre ?? user.nombre}</h1>
                         <p className="text-sm text-[var(--muted)]">Miembro desde {authUser?.created_at ? new Date(authUser.created_at).toLocaleDateString() : user.registro}</p>
+                        {suscripcion && (
+                            <p className="text-sm text-[var(--accent)] font-semibold mt-1">
+                                Plan {suscripcion.plan.nombre_plan.charAt(0).toUpperCase() + suscripcion.plan.nombre_plan.slice(1)} - {suscripcion.estado_suscripcion}
+                            </p>
+                        )}
                         <div className="mt-3">
                             <button className="px-4 py-2 rounded-md bg-[var(--accent)] text-[#071218] font-semibold flex items-center gap-2">
                                 <Wrench size={16} />
@@ -287,6 +405,87 @@ const MiPerfilPage: React.FC = () => {
                             )}
                         </div>
 
+                        {/* Sección de Mi Suscripción */}
+                        {suscripcion && (
+                            <div className="bg-[var(--card)] rounded-xl p-5">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="font-semibold text-[var(--color-2)]">Mi Suscripción</h3>
+                                    <div className="text-[var(--accent)] font-semibold">
+                                        {suscripcion.plan.nombre_plan.charAt(0).toUpperCase() + suscripcion.plan.nombre_plan.slice(1)}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 text-sm text-[var(--color-2)]">
+                                    <div className="flex justify-between">
+                                        <strong>Estado:</strong>
+                                        <span className="capitalize">{suscripcion.estado_suscripcion}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <strong>Precio:</strong>
+                                        <span>${suscripcion.plan.precio}/{suscripcion.plan.periodo_facturacion}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <strong>Fecha inicio:</strong>
+                                        <span>{new Date(suscripcion.fecha_inicio).toLocaleDateString()}</span>
+                                    </div>
+                                    {suscripcion.fecha_fin && (
+                                        <div className="flex justify-between">
+                                            <strong>Fecha fin:</strong>
+                                            <span>{new Date(suscripcion.fecha_fin).toLocaleDateString()}</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="mt-4">
+                                    <h4 className="font-semibold text-[var(--color-2)] mb-2">Uso de Características</h4>
+                                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                                        {suscripcion.features_status
+                                            .filter((f) => f.limite_actual !== null)
+                                            .map((feature) => {
+                                                const limiteActual = feature.limite_actual ?? 0;
+                                                const porcentaje = limiteActual > 0 
+                                                    ? Math.round((feature.uso_actual / limiteActual) * 100) 
+                                                    : 0;
+                                                
+                                                return (
+                                                    <div key={feature.caracteristica} className="p-2 rounded bg-[rgba(255,255,255,0.02)]">
+                                                        <div className="flex justify-between items-start">
+                                                            <div className="flex-1">
+                                                                <div className="text-xs font-medium text-[var(--color-2)]">
+                                                                    {feature.descripcion}
+                                                                </div>
+                                                                {limiteActual === 0 ? (
+                                                                    <div className="text-xs text-orange-400 mt-1">
+                                                                        {feature.upsell_message}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-xs text-[var(--muted)] mt-1">
+                                                                        Uso: {feature.uso_actual} / {limiteActual}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            {limiteActual > 0 && (
+                                                                <div className="ml-2 text-xs font-semibold text-[var(--accent)]">
+                                                                    {porcentaje}%
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        {limiteActual > 0 && (
+                                                            <div className="mt-2 w-full bg-[rgba(255,255,255,0.1)] rounded-full h-1.5">
+                                                                <div
+                                                                    className="bg-[var(--accent)] h-1.5 rounded-full transition-all"
+                                                                    style={{ width: `${Math.min(porcentaje, 100)}%` }}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Sección de Planes */}
                         <div className="bg-[var(--card)] rounded-xl p-5">
                             <div className="flex items-center justify-between mb-3">
@@ -294,23 +493,61 @@ const MiPerfilPage: React.FC = () => {
                                 <div className="text-[var(--color-2)]">Escoge el plan ideal</div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                {plans.map((p) => (
-                                    <div key={p.id} className="p-3 rounded-lg bg-[rgba(255,255,255,0.02)] flex flex-col justify-between">
-                                        <div>
-                                            <div className="font-medium text-[var(--color-2)]">{p.nombre}</div>
-                                            <div className="text-sm text-[var(--color-2)] mt-1">{p.resumen}</div>
-                                        </div>
-                                        <div className="mt-3 flex items-center justify-between">
-                                            <div className="text-[var(--accent)] font-semibold">{p.precio}</div>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => setSelectedPlan(p)} className="px-3 py-1 rounded bg-white/5 text-sm">Ver detalles</button>
-                                                <button className="px-3 py-1 rounded bg-[var(--accent)] text-[#071218] text-sm">Suscribirse</button>
+                            {loadingPlans ? (
+                                <div className="text-center py-8 text-[var(--color-2)]">
+                                    Cargando planes...
+                                </div>
+                            ) : errorPlans ? (
+                                <div className="text-center py-8 text-red-400">
+                                    {errorPlans}
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {plans.map((p) => {
+                                        const buttonInfo = getPlanButtonInfo(p.id);
+                                        const isCurrentPlan = suscripcion && suscripcion.plan.id === p.id;
+                                        
+                                        return (
+                                            <div 
+                                                key={p.id} 
+                                                className={`p-3 rounded-lg bg-[rgba(255,255,255,0.02)] flex flex-col justify-between transition-all ${
+                                                    isCurrentPlan ? 'ring-2 ring-[var(--accent)]' : ''
+                                                }`}
+                                            >
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="font-medium text-[var(--color-2)]">{p.nombre}</div>
+                                                        {isCurrentPlan && (
+                                                            <span className="text-xs bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded-full">
+                                                                Actual
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-sm text-[var(--color-2)] mt-1">{p.resumen}</div>
+                                                </div>
+                                                <div className="mt-3 flex items-center justify-between">
+                                                    <div className="text-[var(--accent)] font-semibold">{p.precio}</div>
+                                                    <div className="flex gap-2">
+                                                        <button 
+                                                            onClick={() => setSelectedPlan(p)} 
+                                                            className="px-3 py-1 rounded bg-white/5 text-sm hover:bg-white/10 transition-colors"
+                                                        >
+                                                            Ver detalles
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => handleCambiarPlan(p.id, p.nombre)}
+                                                            className={`px-3 py-1 rounded text-sm transition-all ${buttonInfo.className}`}
+                                                            disabled={buttonInfo.disabled}
+                                                        >
+                                                            {buttonInfo.text}
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </section>
